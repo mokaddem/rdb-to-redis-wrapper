@@ -8,7 +8,10 @@ import argparse
 import json
 import redis
 
-class rdbForm(npyscreen.Form):
+ALLREGEX = {}
+REGMAXSIZE = 0
+
+class rdbForm(npyscreen.ActionForm):
     def beforeEditing(self):
         sys.exit(0)
 
@@ -32,11 +35,52 @@ class rdbForm(npyscreen.Form):
 
         #s  = self.add(npyscreen.TitleSliderPercent, out_of=100, value=35, name="Progress:", editable=False)
 
+        self.edit()
+    
+    def on_ok(self):
+        selected = self.chosenServer.get_selected_objects()
+        for sel in selected:
+            ALLREGEX[sel] = []
 
-        # This lets the user interact with the Form.
+
+class filterForm(npyscreen.ActionForm):
+    def vspace(self, sp=1):
+        self.nextrely += sp
+
+    def create(self):
+        self.regex  =   self.add(npyscreen.TitleText, name='Regex:', value='')
+        self.vspace(2)
+        self.add(npyscreen.TitleFixedText, name='Select redis database for which this regex applies:', value='', editable=False)
+        self.tree   =   self.add(npyscreen.MLTreeMultiSelect)
+        treedata    =   npyscreen.NPSTreeData(content='Redis servers', selectable=False, ignoreRoot=False)
+        for serv in ALLREGEX.keys():
+            n = treedata.newChild(content=serv, selectable=True)
+            for r in ALLREGEX[serv]:
+                n.newChild(content=r, selectable=True)
+
+        self.tree.values = treedata
+
+        self.add_button = self.add(npyscreen.ButtonPress, name = 'Add', relx = 20,rely= 25)
+        self.add_button.whenPressed = self.addReg
+
         self.edit()
 
 
+    def addReg(self):
+        selected = self.tree.get_selected_objects(return_node=False)
+        regVal = self.regex.value
+        for sel in selected:
+            ALLREGEX[sel].append(regVal)
+
+        treedata    =   npyscreen.NPSTreeData(content='Redis servers', selectable=False, ignoreRoot=False)
+        for serv in ALLREGEX.keys():
+            n = treedata.newChild(content=serv, selectable=True)
+            for r in ALLREGEX[serv]:
+                n.newChild(content=r, selectable=False)
+
+        self.tree.values = treedata
+        self.regex.value = ''
+        self.tree.display()
 
 class confirmForm(npyscreen.ActionForm):
     def vspace(self, sp=1):
@@ -47,12 +91,19 @@ class confirmForm(npyscreen.ActionForm):
         self.rdbFile = self.add(npyscreen.BoxBasic, name='RDB file', max_width=20, relx=2, max_height=15, editable=False)
         self.vspace(2)
         curY += 17+2
-        self.box1 = self.add(npyscreen.BoxTitle, name='*:8888', max_width=20, relx=2, max_height=15, editable=False)
-        self.box2 = self.add(npyscreen.BoxTitle, name='*:6379', max_width=20, rely=curY, relx=22, max_height=15, editable= False,
-                contained_widget_arguments={
-                    })
+
+        i=0
+        for serv, reg in ALLREGEX.items():
+            box = self.add(npyscreen.BoxTitle, name=serv, max_width=40, rely=curY, relx=2+i*40, max_height=15, editable= False)
+            box.values = reg
+            i += 1
+
+        #self.box1 = self.add(npyscreen.BoxTitle, name='*:8888', max_width=20, relx=2, max_height=15, editable=False)
+        #self.box2 = self.add(npyscreen.BoxTitle, name='*:6379', max_width=20, rely=curY, relx=22, max_height=15, editable= False,
+        #        contained_widget_arguments={
+        #            })
         curY += 17
-        self.box2.values = ["regex1", "regex2"]
+        #self.box2.values = ["regex1", "regex2"]
 
         self.edit()
 
@@ -60,8 +111,9 @@ class confirmForm(npyscreen.ActionForm):
 class MyApplication(npyscreen.NPSAppManaged):
     def onStart(self):
         self.addForm('MAIN', rdbForm, name='RDB to Redis Server')
-        self.addForm('filter', confirmForm, name='Confirm')
-        #self.addForm('MAIN', confirmForm, name='Filtering')
+        self.addForm('filter', filterForm, name='Filter')
+        self.addForm('confirm', confirmForm, name='Confirm')
+        #self.addForm('MAIN', filterForm, name='Filtering')
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Read rdb file and copy wanted content into a running redis server.')
