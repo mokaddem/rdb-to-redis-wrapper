@@ -12,9 +12,6 @@ ALLREGEX = {}
 REGMAXSIZE = 0
 
 class rdbForm(npyscreen.ActionForm):
-    def beforeEditing(self):
-        sys.exit(0)
-
     def vspace(self, sp=1):
         self.nextrely += sp
 
@@ -33,14 +30,16 @@ class rdbForm(npyscreen.ActionForm):
         self.chosenServer   =   self.add(npyscreen.TitleMultiSelect, max_height=5, value = [], name="Select Redis server in which to inject:", values=['*:8888', '*:6379', '*:6380'])
         self.vspace()
 
-        #s  = self.add(npyscreen.TitleSliderPercent, out_of=100, value=35, name="Progress:", editable=False)
 
-        self.edit()
-    
     def on_ok(self):
         selected = self.chosenServer.get_selected_objects()
         for sel in selected:
             ALLREGEX[sel] = []
+        self.parentApp.switchForm('FILTER')
+
+
+    def on_cancel(self):
+        sys.exit(0)
 
 
 class filterForm(npyscreen.ActionForm):
@@ -56,14 +55,12 @@ class filterForm(npyscreen.ActionForm):
         for serv in ALLREGEX.keys():
             n = treedata.newChild(content=serv, selectable=True)
             for r in ALLREGEX[serv]:
-                n.newChild(content=r, selectable=True)
+                n.newChild(content=r, selectable=False)
 
         self.tree.values = treedata
 
         self.add_button = self.add(npyscreen.ButtonPress, name = 'Add', relx = 20,rely= 25)
         self.add_button.whenPressed = self.addReg
-
-        self.edit()
 
 
     def addReg(self):
@@ -71,6 +68,8 @@ class filterForm(npyscreen.ActionForm):
         regVal = self.regex.value
         for sel in selected:
             ALLREGEX[sel].append(regVal)
+            global REGMAXSIZE
+            REGMAXSIZE = REGMAXSIZE if REGMAXSIZE > len(regVal) else len(regVal)
 
         treedata    =   npyscreen.NPSTreeData(content='Redis servers', selectable=False, ignoreRoot=False)
         for serv in ALLREGEX.keys():
@@ -82,6 +81,12 @@ class filterForm(npyscreen.ActionForm):
         self.regex.value = ''
         self.tree.display()
 
+    def on_cancel(self):
+        self.parentApp.switchForm('MAIN')
+
+    def on_ok(self):
+        self.parentApp.switchForm('CONFIRM')
+
 class confirmForm(npyscreen.ActionForm):
     def vspace(self, sp=1):
         self.nextrely += sp
@@ -92,9 +97,14 @@ class confirmForm(npyscreen.ActionForm):
         self.vspace(2)
         curY += 17+2
 
+        boxsize = REGMAXSIZE+8
         i=0
         for serv, reg in ALLREGEX.items():
-            box = self.add(npyscreen.BoxTitle, name=serv, max_width=40, rely=curY, relx=2+i*40, max_height=15, editable= False)
+            if boxsize < 40:
+                box = self.add(npyscreen.BoxTitle, name=serv, max_width=boxsize, rely=curY, relx=2+i*boxsize, max_height=15, editable= False)
+            else:
+                box = self.add(npyscreen.BoxTitle, name=serv, max_width=boxsize, relx=2, max_height=10, editable= False)
+
             box.values = reg
             i += 1
 
@@ -105,14 +115,18 @@ class confirmForm(npyscreen.ActionForm):
         curY += 17
         #self.box2.values = ["regex1", "regex2"]
 
-        self.edit()
 
+    def on_cancel(self):
+        self.parentApp.switchForm('FILTER')
+
+    def on_ok(self):
+        sys.exit(1)
 
 class MyApplication(npyscreen.NPSAppManaged):
     def onStart(self):
-        self.addForm('MAIN', rdbForm, name='RDB to Redis Server')
-        self.addForm('filter', filterForm, name='Filter')
-        self.addForm('confirm', confirmForm, name='Confirm')
+        self.addFormClass('MAIN', rdbForm, name='RDB to Redis Server')
+        self.addFormClass('FILTER', filterForm, name='Filter')
+        self.addFormClass('CONFIRM', confirmForm, name='Confirm')
         #self.addForm('MAIN', filterForm, name='Filtering')
 
 if __name__ == "__main__":
@@ -150,4 +164,5 @@ if __name__ == "__main__":
         #self.tree.values = treedata
        #       max_height=5, rely=9)
 
+        #s  = self.add(npyscreen.TitleSliderPercent, out_of=100, value=35, name="Progress:", editable=False)
 
