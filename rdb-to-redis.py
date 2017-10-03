@@ -22,7 +22,9 @@ def sizeof_fmt(num, suffix='B'):
 
 class RDBObject:
     def __init__(self):
+        self.filename   =   None
         self.target_server  =   {}
+        self.target_server_indexes = []
         self.rdbDbs =           []      
         self.fileSize   =   ''
         self.numDB      =   ''
@@ -44,6 +46,9 @@ class RDBObject:
         self.target_server = {}
         for serv in server_list:
             self.target_server[serv] = []
+
+    def add_target_redis_servers_indexes(self, index_list):
+        self.target_server_indexes = index_list
 
     def add_regex_to_servers(self, regex, server_list):
         if len(server_list) > 0:
@@ -68,7 +73,14 @@ class RDBObject:
         return to_ret
 
     def get_target_redis_servers(self):
-        return list(self.target_server.keys())
+        the_list = list(self.target_server.keys())
+        if len(the_list) > 0:
+            return the_list
+        else:
+            return self.list_running_servers()
+
+    def get_target_redis_servers_indexes(self):
+        return list(self.target_server_indexes)
 
     def get_seleced_db(self):
         return self.rdbDbs
@@ -77,26 +89,14 @@ class RDBObject:
 '''
 Screen 1
 '''
-
-class CustomTitleFilenameCombo(npyscreen.TitleFilenameCombo):
-    def __init__(self, *args, **keywords):
-        super(CustomTitleFilenameCombo, self).__init__(*args, **keywords)
-        self.add_handlers({
-            curses.ascii.SP:  self.Custom_h_change_value,
-            curses.ascii.NL:  self.Custom_h_change_value,
-            curses.ascii.CR:  self.Custom_h_change_value,
-        })
-
-    def Custom_h_change_value(self, *args, **keywords):
-        F.write('success')
-        self.h_change_value
-
 class rdbForm(npyscreen.ActionForm):
     def vspace(self, sp=1):
         self.nextrely += sp
 
     def create(self):
         self.redisFile  =   self.add(npyscreen.TitleFilenameCombo, name = "RDB file to process:")
+        if RDBOBJECT.filename:
+            self.redisFile.value = RDBOBJECT.filename
         self.redisFile.value_changed_callback = self.on_valueChanged
         self.vspace()
 
@@ -105,7 +105,6 @@ class rdbForm(npyscreen.ActionForm):
         self.grid = self.add(npyscreen.GridColTitles, editable=False, column=3, max_height=3,
                 col_titles=rdbInfo[0],
                 values=rdbInfo[1])
-                #values=[('123kB', '3', 21987)])
 
         self.vspace()
         self.chosenDb   =   self.add(npyscreen.TitleMultiSelect, max_height=15+3, max_width=30,
@@ -115,19 +114,21 @@ class rdbForm(npyscreen.ActionForm):
         self.vspace()
         self.chosenServer=  self.add(npyscreen.TitleMultiSelect, max_height=10, rely=10, relx=self.chosenDb.width+10,
                 name    =   "Select Redis server in which to inject:", 
-                value   =   [], 
+                value   =   RDBOBJECT.get_target_redis_servers_indexes(), 
                 values  =   RDBOBJECT.list_running_servers())
         self.vspace()
 
     def on_valueChanged(self, *args, **keywords):
-        RDBOBJECT.add_filename(self.redisFile.value)
-        rdbInfo = RDBOBJECT.get_rdb_infos()
-        self.grid.values = rdbInfo[1]
-        self.grid.display()
+        if self.redisFile.value:
+            RDBOBJECT.add_filename(self.redisFile.value)
+            rdbInfo = RDBOBJECT.get_rdb_infos()
+            self.grid.values = rdbInfo[1]
+            self.grid.display()
 
     def on_ok(self):
         selected = self.chosenServer.get_selected_objects()
         RDBOBJECT.add_target_redis_servers(selected)
+        RDBOBJECT.add_target_redis_servers_indexes(self.chosenServer.value)
         selected = self.chosenDb.get_selected_objects()
         RDBOBJECT.add_selected_db(selected)
         self.parentApp.switchForm('FILTER')
