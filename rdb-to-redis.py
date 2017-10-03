@@ -2,7 +2,7 @@
 # -*-coding:UTF-8 -*
 
 import npyscreen, curses
-import sys, os
+import sys, os, time
 import time, datetime
 import argparse
 import json
@@ -11,6 +11,7 @@ from subprocess import PIPE, Popen
 
 RDBOBJECT = None
 RUNNING_REDIS_SERVER_NAME_COMMAND = rb"ps aux | grep redis-server | cut -d. -f4 | cut -s -d ' ' -f2 | grep :"
+MEMORY_REPORT_COMMAND = r"rdb -c memory {}"
 F = open('log', 'w')
 
 def sizeof_fmt(num, suffix='B'):
@@ -27,16 +28,63 @@ class RDBObject:
         self.target_server_indexes = []
         self.rdbDbs =           []      
         self.fileSize   =   ''
-        self.numDB      =   ''
-        self.numKeys    =   ''
         self.regexMaxSize=  0
 
+        #after memory report (type change after MemReport)
+        self.activeDB   =   '?'
+        self.totKey     =   '?'
+        self.keyTypeCount=  {'string': '?', 'hash': '?', 'set': '?', 'sortedset': '?', 'list': '?'}
+        self.keyTypeSizeCount=  {'string': '?', 'hash': '?', 'set': '?', 'sortedset': '?', 'list': '?'}
+
+    def execMemoryReport(self):
+        cmd = MEMORY_REPORT_COMMAND.format(self.filename)
+        start = npyscreen.notify_ok_cancel("Execute a memory report? This operation may take a long time.", title= 'Confirm')
+        if start:
+            #set correct types
+            self.activeDB   =   set()
+            self.totKey     =   0
+            self.keyTypeCount=  {'string': 0, 'hash': 0, 'set': 0, 'sortedset': 0, 'list': 0}
+            self.keyTypeSizeCount=  {'string': 0, 'hash': 0, 'set': 0, 'sortedset': 0, 'list': 0}
+            self.totKeySize = 0
+
+            npyscreen.notify("Memory report in progress... \nResult will be saved in \'mem_report.csv\'.", title='Please Wait')
+            time1 = time.time()
+            p = Popen([cmd], stdin=PIPE, stdout=PIPE, bufsize=1, shell=True)
+            report = p.stdout.read()
+            with open('mem_report.csv', 'w') as f:
+                f.write(str(report))
+            report = report.decode('utf8')
+            report = report.splitlines()
+            for line in report[1:]:
+                tab     =   line.split(',')
+                db      =   tab[0]
+                kType   =   tab[1]
+                k       =   tab[2]
+                size    =   tab[3]
+                encod   =   tab[4]
+                numElem =   tab[5]
+                largElem=   tab[6]
+
+                self.activeDB.add(db)
+                self.totKey += 1
+                self.keyTypeCount[kType]    += 1
+                self.keyTypeSizeCount[kType]+= int(size)/8
+                self.totKeySize += int(size)/8
+            elapsedTime = time.time() - time1
+
+            #cleanup
+            for t, Bsize in self.keyTypeSizeCount.items():
+                self.activeDB = list(self.activeDB)
+                self.activeDB.sort()
+
+            if elapsedTime < 60:
+                npyscreen.notify_confirm("Elapsed time: {:.2f} sec".format(float(elapsedTime)), title= 'Info')
+            else:
+                npyscreen.notify_confirm("Elapsed time: {:.2f} min".format(float(elapsedTime)/60.0), title= 'Info')
 
     def add_filename(self, filename):
         self.filename   =   filename
         self.fileSize   =   sizeof_fmt(os.path.getsize(filename))
-        self.numDB      =   0
-        self.numKeys    =   0
         self.regexMaxSize=  0
 
     def add_selected_db(self, dbs):
@@ -60,7 +108,6 @@ class RDBObject:
         p = Popen([RUNNING_REDIS_SERVER_NAME_COMMAND], stdin=PIPE, stdout=PIPE, bufsize=1, shell=True)
         return [serv.decode('ascii') for serv in p.stdout.read().splitlines()]
 
-
     def get_regexes_from_server(self, serv):
         to_ret = [r for r in self.target_server[serv]]
         return to_ret
@@ -68,8 +115,52 @@ class RDBObject:
     #return [0]: header, [1]: info 
     def get_rdb_infos(self):
         to_ret = []
-        to_ret.append(['RDB size', '# of active DB', 'Total # of Keys'])
-        to_ret.append([(self.fileSize, self.numDB, self.numKeys)])
+        to_ret.append(['RDB file size', '# of active DB', 'Total # of Keys'])
+        to_ret.append([(self.fileSize, self.activeDB, self.totKey)])
+        return to_ret
+
+    def get_rdb_key_infos(self):
+        to_ret = []
+        to_ret.append(['', 'String', 'Hash', 'Set', 'Sortedset', 'List'])
+        data = []
+
+        if self.totKey == 0 or self.totKey == '?':
+            to_ret.append([
+                ["Key type count:",
+                    "{}".format(self.keyTypeCount['string']),
+                    "{}".format(self.keyTypeCount['hash']),
+                    "{}".format(self.keyTypeCount['set']),
+                    "{}".format(self.keyTypeCount['sortedset']),
+                    "{}".format(self.keyTypeCount['list'])
+                ],
+                ["Key type size:",
+                    "{}".format(self.keyTypeSizeCount['string']),
+                    "{}".format(self.keyTypeSizeCount['hash']),
+                    "{}".format(self.keyTypeSizeCount['set']),
+                    "{}".format(self.keyTypeSizeCount['sortedset']),
+                    "{}".format(self.keyTypeSizeCount['list'])
+                ]])
+        else:
+            to_ret.append([
+                ["Key type count:",
+                    "{}\t({:.2%})".format(self.keyTypeCount['string'], self.keyTypeCount['string']/self.totKey),
+                    "{}\t({:.2%})".format(self.keyTypeCount['hash'], self.keyTypeCount['hash']/self.totKey),
+                    "{}\t({:.2%})".format(self.keyTypeCount['set'], self.keyTypeCount['set']/self.totKey),
+                    "{}\t({:.2%})".format(self.keyTypeCount['sortedset'], self.keyTypeCount['sortedset']/self.totKey),
+                    "{}\t({:.2%})".format(self.keyTypeCount['list'], self.keyTypeCount['list']/self.totKey)
+                ],
+                ["Key type size:",
+                    "{}\t({:.2%})".format(sizeof_fmt(self.keyTypeSizeCount['string']), self.keyTypeSizeCount['string']/self.totKeySize),
+                    "{}\t({:.2%})".format(sizeof_fmt(self.keyTypeSizeCount['hash']), self.keyTypeSizeCount['hash']/self.totKeySize),
+                    "{}\t({:.2%})".format(sizeof_fmt(self.keyTypeSizeCount['set']), self.keyTypeSizeCount['set']/self.totKeySize),
+                    "{}\t({:.2%})".format(sizeof_fmt(self.keyTypeSizeCount['sortedset']), self.keyTypeSizeCount['sortedset']/self.totKeySize),
+                    "{}\t({:.2%})".format(sizeof_fmt(self.keyTypeSizeCount['list']), self.keyTypeSizeCount['list']/self.totKeySize)
+                ]
+            ])
+
+
+
+        F.write(str(to_ret))
         return to_ret
 
     def get_target_redis_servers(self):
@@ -85,6 +176,9 @@ class RDBObject:
     def get_seleced_db(self):
         return self.rdbDbs
 
+    def get_16_db(self):
+        return [int(db) for db in range(16)]
+
 
 '''
 Screen 1
@@ -94,29 +188,48 @@ class rdbForm(npyscreen.ActionForm):
         self.nextrely += sp
 
     def create(self):
-        self.redisFile  =   self.add(npyscreen.TitleFilenameCombo, name = "RDB file to process:")
+        self.redisFile  =   self.add(npyscreen.TitleFilenameCombo, name="RDB file to process:")
         if RDBOBJECT.filename:
             self.redisFile.value = RDBOBJECT.filename
         self.redisFile.value_changed_callback = self.on_valueChanged
         self.vspace()
 
+        self.btnMemory  =   self.add(npyscreen.ButtonPress, name="Generate memory report", when_pressed_function=self.memReport)
+        self.vspace(3)
+
+
         rdbInfo = RDBOBJECT.get_rdb_infos()
         self.add(npyscreen.FixedText, value="RDB file information:", editable=False, color='LABEL')
-        self.grid = self.add(npyscreen.GridColTitles, editable=False, column=3, max_height=3,
+        self.grid = self.add(npyscreen.GridColTitles, editable=False, columns=3, max_height=5,
+                col_titles=rdbInfo[0],
+                values=rdbInfo[1])
+        #self.vspace()
+
+        rdbInfo = RDBOBJECT.get_rdb_key_infos()
+        self.grid2 = self.add(npyscreen.GridColTitles, editable=False, columns=6, max_height=5,
                 col_titles=rdbInfo[0],
                 values=rdbInfo[1])
 
-        self.vspace()
+        self.vspace(3)
         self.chosenDb   =   self.add(npyscreen.TitleMultiSelect, max_height=15+3, max_width=30,
                 name="Select DB Number from file:", 
                 value   =   RDBOBJECT.get_seleced_db(), 
-                values  =   RDBOBJECT.get_seleced_db())
+                values  =   RDBOBJECT.get_16_db())
         self.vspace()
-        self.chosenServer=  self.add(npyscreen.TitleMultiSelect, max_height=10, rely=10, relx=self.chosenDb.width+10,
+        self.chosenServer=  self.add(npyscreen.TitleMultiSelect, max_height=10, rely=23, relx=self.chosenDb.width+10,
                 name    =   "Select Redis server in which to inject:", 
                 value   =   RDBOBJECT.get_target_redis_servers_indexes(), 
                 values  =   RDBOBJECT.list_running_servers())
         self.vspace()
+
+    def memReport(self):
+        RDBOBJECT.execMemoryReport()
+        rdbInfo = RDBOBJECT.get_rdb_infos()
+        self.grid.values = rdbInfo[1]
+        rdbInfo = RDBOBJECT.get_rdb_key_infos()
+        self.grid2.values = rdbInfo[1]
+        self.grid.display()
+        self.grid2.display()
 
     def on_valueChanged(self, *args, **keywords):
         if self.redisFile.value:
