@@ -322,7 +322,7 @@ class filterForm(npyscreen.ActionForm):
         self.vspace(2)
         self.add(npyscreen.TitleFixedText, name='Select redis database for which this regex applies:', 
                 value='', editable=False)
-        self.tree   =   self.add(npyscreen.MLTreeMultiSelect, max_height=10, max_width=30)
+        self.tree   =   self.add(npyscreen.MLTreeMultiSelect, max_height=10, max_width=80)
         treedata    =   npyscreen.NPSTreeData(content='Redis servers', selectable=False, ignoreRoot=False)
         for serv in RDBOBJECT.get_target_redis_servers():
             n = treedata.newChild(content=serv, selectable=True)
@@ -331,7 +331,7 @@ class filterForm(npyscreen.ActionForm):
 
         self.tree.values = treedata
 
-        self.add_button = self.add(npyscreen.ButtonPress, name = 'Add', relx = 35,rely = 7)
+        self.add_button = self.add(npyscreen.ButtonPress, name = 'Add', relx = 85,rely = 7)
         self.add_button.whenPressed = self.addReg
 
 
@@ -365,17 +365,19 @@ class confirmForm(npyscreen.ActionForm):
 
     def create(self):
         curY = 0
-        self.rdbFile = self.add(npyscreen.BoxBasic, name='RDB file', max_width=20, relx=2, max_height=15, editable=False)
+        self.rdbFile = self.add(npyscreen.BoxTitle, name='RDB file', relx=2, max_height=8, editable=False,
+                values=["Redis database processed:", "    "+str(RDBOBJECT.get_seleced_db())]
+                )
         self.vspace(2)
-        curY += 17+2
+        curY += 11
 
         boxsize = RDBOBJECT.regexMaxSize+8
         i=0
         for serv in RDBOBJECT.get_target_redis_servers():
             if boxsize < 40:
-                box = self.add(npyscreen.BoxTitle, name=serv, max_width=boxsize, rely=curY, relx=2+i*boxsize, max_height=15, editable= False)
+                box = self.add(npyscreen.BoxTitle, name=serv, max_width=boxsize, rely=curY, relx=2+i*boxsize, max_height=7, editable= False)
             else:
-                box = self.add(npyscreen.BoxTitle, name=serv, max_width=boxsize, relx=2, max_height=10, editable= False)
+                box = self.add(npyscreen.BoxTitle, name=serv, max_width=boxsize, relx=2, max_height=7, editable= False)
 
             box.values = RDBOBJECT.get_regexes_from_server(serv)
             i += 1
