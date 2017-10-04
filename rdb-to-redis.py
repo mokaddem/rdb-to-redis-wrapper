@@ -131,6 +131,9 @@ class RDBObject:
         p = Popen([RUNNING_REDIS_SERVER_NAME_COMMAND], stdin=PIPE, stdout=PIPE, bufsize=1, shell=True)
         return [serv.decode('ascii') for serv in p.stdout.read().splitlines()]
 
+    def get_activeDB(self):
+        return self.activeDB
+
     def get_regexes_from_server(self, serv):
         to_ret = [r for r in self.target_server[serv]]
         return to_ret
@@ -212,9 +215,11 @@ class rdbForm(npyscreen.ActionForm):
             self.time_widget.hidden = False
             self.timeR_widget.hidden = False
             self.time_pb.hidden = False
+
             self.time_widget.display()
             self.timeR_widget.display()
             self.time_pb.display()
+
             while(not RDBOBJECT.Pfinished): #process not terminated
                 elapsSec    =   time.time()-RDBOBJECT.processStartTime
                 elapsTimeStr=   "{:.2f} min".format(elapsSec/60) if elapsSec >= 60.0 else "{:.2f} sec".format(elapsSec)
@@ -222,6 +227,7 @@ class rdbForm(npyscreen.ActionForm):
                 self.time_widget.value = elapsTimeStr
                 self.timeR_widget.value = remTimeStr
                 self.time_pb.value = elapsSec/RDBOBJECT.estSecs*100 if elapsSec/RDBOBJECT.estSecs*100 <= 100 else 99.99
+
                 self.time_widget.display()
                 self.timeR_widget.display()
                 self.time_pb.display()
@@ -236,14 +242,14 @@ class rdbForm(npyscreen.ActionForm):
             self.time_widget.hidden = True
             self.timeR_widget.hidden = True
             self.time_pb.hidden = True
-            self.time_widget.display()
-            self.timeR_widget.display()
-            self.time_pb.display()
 
             rdbInfo             =   RDBOBJECT.get_rdb_infos()
             self.grid.values    =   rdbInfo[1]
             rdbInfo             =   RDBOBJECT.get_rdb_key_infos()
-            self.grid2.values   =  rdbInfo[1]
+            self.grid2.values   =   rdbInfo[1]
+            self.chosenDb.values = RDBOBJECT.get_activeDB()
+            self.chosenDb.value  = [x for x in range(len(self.chosenDb.values))]
+
             self.display()
             RDBOBJECT.processStartTime = 0
 
@@ -258,7 +264,7 @@ class rdbForm(npyscreen.ActionForm):
         self.btnMemory  =   self.add(npyscreen.ButtonPress, name="Generate memory report", when_pressed_function=RDBOBJECT.execMemoryReport)
         self.vspace()
         self.time_widget = self.add(npyscreen.TitleFixedText, name="Elapsed time:", value="", editable=False, hidden=True, color='STANDOUT') 
-        self.timeR_widget = self.add(npyscreen.TitleFixedText, name="Estimated remaining time:", max_width=30, value="", editable=False, hidden=True, color='STANDOUT') 
+        self.timeR_widget = self.add(npyscreen.TitleFixedText, name="Estimated remaining time:", max_width=80, value="", editable=False, hidden=True, color='STANDOUT') 
         self.time_pb  = self.add(npyscreen.TitleSliderPercent, out_of=100, value=0, name="Estimated progress:", editable=False, hidden=True)
         self.vspace(1)
 
@@ -267,7 +273,6 @@ class rdbForm(npyscreen.ActionForm):
         self.grid = self.add(npyscreen.GridColTitles, editable=False, columns=3, max_height=5,
                 col_titles=rdbInfo[0],
                 values=rdbInfo[1])
-        #self.vspace()
 
         rdbInfo = RDBOBJECT.get_rdb_key_infos()
         self.grid2 = self.add(npyscreen.GridColTitles, editable=False, columns=6, max_height=5,
