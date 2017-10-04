@@ -27,7 +27,7 @@ class RDBObject:
         self.target_server  =   {}
         self.target_server_indexes = []
         self.rdbDbs =           []      
-        self.fileSize   =   ''
+        self.fileSize   =   0.0
         self.regexMaxSize=  0
 
         #after memory report (type change after MemReport)
@@ -38,7 +38,11 @@ class RDBObject:
 
     def execMemoryReport(self):
         cmd = MEMORY_REPORT_COMMAND.format(self.filename)
-        start = npyscreen.notify_ok_cancel("Execute a memory report? This operation may take a long time.", title= 'Confirm')
+        #estimate needed time
+        estSecs = int(1.0*self.fileSize/(1024.0*1024.0)) #1s per Mb
+        estTimeStr = "{:.2f} min".format(estSecs/60) if estSecs >= 60.0 else "{:.2f} sec".format(estSecs)
+
+        start = npyscreen.notify_ok_cancel("Execute a memory report? This operation may take a long time.\nEstimated Time: ~{}".format(estTimeStr), title= 'Confirm')
         if start:
             #set correct types
             self.activeDB   =   set()
@@ -94,7 +98,7 @@ class RDBObject:
 
     def add_filename(self, filename):
         self.filename   =   filename
-        self.fileSize   =   sizeof_fmt(os.path.getsize(filename))
+        self.fileSize   =   os.path.getsize(filename)
         self.regexMaxSize=  0
 
     def add_selected_db(self, dbs):
@@ -126,7 +130,7 @@ class RDBObject:
     def get_rdb_infos(self):
         to_ret = []
         to_ret.append(['RDB file size', '# of active DB', 'Total # of Keys'])
-        to_ret.append([(self.fileSize, self.activeDB, self.totKey)])
+        to_ret.append([(sizeof_fmt(self.fileSize), self.activeDB, self.totKey)])
         return to_ret
 
     def get_rdb_key_infos(self):
