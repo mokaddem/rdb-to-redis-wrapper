@@ -47,12 +47,10 @@ class RDBObject:
             self.keyTypeSizeCount=  {'string': 0, 'hash': 0, 'set': 0, 'sortedset': 0, 'list': 0}
             self.totKeySize = 0
 
-            npyscreen.notify("Memory report in progress... \nResult will be saved in \'mem_report.csv\'.", title='Please Wait')
+            npyscreen.notify("Memory report in progress... \nResult will be saved in \'mem_report.txt\'.", title='Please Wait')
             time1 = time.time()
             p = Popen([cmd], stdin=PIPE, stdout=PIPE, bufsize=1, shell=True)
             report = p.stdout.read()
-            with open('mem_report.csv', 'w') as f:
-                f.write(str(report))
             report = report.decode('utf8')
             report = report.splitlines()
             for line in report[1:]:
@@ -77,10 +75,22 @@ class RDBObject:
                 self.activeDB = list(self.activeDB)
                 self.activeDB.sort()
 
+            with open('mem_report.txt', 'w') as f:
+                f.write(str(
+                    {
+                        "filename": self.filename,
+                        "File size":self.fileSize,
+                        "active DB":self.activeDB,
+                        "Total key":self.totKey,
+                        "Number of key per key type": self.keyTypeCount,
+                        "Total size per key type": self.keyTypeSizeCount
+                    }
+                    ))
+
             if elapsedTime < 60:
-                npyscreen.notify_confirm("Elapsed time: {:.2f} sec".format(float(elapsedTime)), title= 'Info')
+                npyscreen.notify_confirm("Elapsed time: {:.2f} sec.\nResult saved in \'mem_report.txt\'.".format(float(elapsedTime)), title= 'Info')
             else:
-                npyscreen.notify_confirm("Elapsed time: {:.2f} min".format(float(elapsedTime)/60.0), title= 'Info')
+                npyscreen.notify_confirm("Elapsed time: {:.2f} min.\nResult saved in \'mem_report.txt\'.".format(float(elapsedTime)/60.0), title= 'Info')
 
     def add_filename(self, filename):
         self.filename   =   filename
