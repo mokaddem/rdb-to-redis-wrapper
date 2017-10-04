@@ -8,11 +8,12 @@ import argparse
 import json
 import redis
 from subprocess import PIPE, Popen
+import threading
 
 RDBOBJECT = None
 RUNNING_REDIS_SERVER_NAME_COMMAND = rb"ps aux | grep redis-server | cut -d. -f4 | cut -s -d ' ' -f2 | grep :"
 MEMORY_REPORT_COMMAND = r"rdb -c memory {}"
-F = open('log', 'w')
+F = open('log', 'a')
 
 def sizeof_fmt(num, suffix='B'):
     for unit in ['','Ki','Mi','Gi','Ti','Pi','Ei','Zi']:
@@ -29,6 +30,7 @@ class RDBObject:
         self.rdbDbs =           []      
         self.fileSize   =   0.0
         self.regexMaxSize=  0
+        self.processStartTime = 0
 
         #after memory report (type change after MemReport)
         self.activeDB   =   '?'
@@ -37,12 +39,12 @@ class RDBObject:
         self.keyTypeSizeCount=  {'string': '?', 'hash': '?', 'set': '?', 'sortedset': '?', 'list': '?'}
 
     def execMemoryReport(self):
-        cmd = MEMORY_REPORT_COMMAND.format(self.filename)
+        self.cmd = MEMORY_REPORT_COMMAND.format(self.filename)
         #estimate needed time
-        estSecs = int(1.0*self.fileSize/(1024.0*1024.0)) #1s per Mb
-        estTimeStr = "{:.2f} min".format(estSecs/60) if estSecs >= 60.0 else "{:.2f} sec".format(estSecs)
+        self.estSecs = int(1.2*self.fileSize/(1024.0*1024.0)) #1.2s per Mb
+        estTimeStr = "{:.2f} min".format(self.estSecs/60) if self.estSecs >= 60.0 else "{:.2f} sec".format(self.estSecs)
 
-        start = npyscreen.notify_ok_cancel("Execute a memory report? This operation may take a long time.\nEstimated Time: ~{}".format(estTimeStr), title= 'Confirm')
+        start = npyscreen.notify_ok_cancel("Execute a memory report? This operation may take a long time.\nEstimated Time: ~{}".format(estTimeStr), title= 'Confirm', editw=1)
         if start:
             #set correct types
             self.activeDB   =   set()
@@ -51,50 +53,57 @@ class RDBObject:
             self.keyTypeSizeCount=  {'string': 0, 'hash': 0, 'set': 0, 'sortedset': 0, 'list': 0}
             self.totKeySize = 0
 
-            npyscreen.notify("Memory report in progress... \nResult will be saved in \'mem_report.txt\'.", title='Please Wait')
-            time1 = time.time()
-            p = Popen([cmd], stdin=PIPE, stdout=PIPE, bufsize=1, shell=True)
-            report = p.stdout.read()
-            report = report.decode('utf8')
-            report = report.splitlines()
-            for line in report[1:]:
-                tab     =   line.split(',')
-                db      =   tab[0]
-                kType   =   tab[1]
-                k       =   tab[2]
-                size    =   tab[3]
-                encod   =   tab[4]
-                numElem =   tab[5]
-                largElem=   tab[6]
+            self.processStartTime = time.time()
+            ntfPopup    =   npyscreen.notify_confirm("Memory report in progress... \nResult will be saved in \'mem_report.txt\'.", title='Please Wait', editw=1)
+            #Long command
 
-                self.activeDB.add(db)
-                self.totKey += 1
-                self.keyTypeCount[kType]    += 1
-                self.keyTypeSizeCount[kType]+= int(size)/8
-                self.totKeySize += int(size)/8
-            elapsedTime = time.time() - time1
+            self.Pfinished = False
+            self.memThread = threading.Thread(name='memThread', target=self.memReportFunction)
+            self.memThread.setDaemon(True)
+            self.memThread.start()
 
-            #cleanup
-            for t, Bsize in self.keyTypeSizeCount.items():
-                self.activeDB = list(self.activeDB)
-                self.activeDB.sort()
+    def memReportFunction(self):
+        self.process = Popen([self.cmd], stdin=PIPE, stdout=PIPE, bufsize=1, shell=True)
 
-            with open('mem_report.txt', 'w') as f:
-                f.write(str(
-                    {
-                        "filename": self.filename,
-                        "File size":self.fileSize,
-                        "active DB":self.activeDB,
-                        "Total key":self.totKey,
-                        "Number of key per key type": self.keyTypeCount,
-                        "Total size per key type": self.keyTypeSizeCount
-                    }
-                    ))
+        report = self.process.stdout.read()
+        report = report.decode('utf8')
+        report = report.splitlines()
+        for line in report[1:]:
+            tab     =   line.split(',')
+            db      =   tab[0]
+            kType   =   tab[1]
+            k       =   tab[2]
+            size    =   tab[3]
+            encod   =   tab[4]
+            numElem =   tab[5]
+            largElem=   tab[6]
 
-            if elapsedTime < 60:
-                npyscreen.notify_confirm("Elapsed time: {:.2f} sec.\nResult saved in \'mem_report.txt\'.".format(float(elapsedTime)), title= 'Info')
-            else:
-                npyscreen.notify_confirm("Elapsed time: {:.2f} min.\nResult saved in \'mem_report.txt\'.".format(float(elapsedTime)/60.0), title= 'Info')
+            self.activeDB.add(db)
+            self.totKey += 1
+            self.keyTypeCount[kType]    += 1
+            self.keyTypeSizeCount[kType]+= int(size)/8
+            self.totKeySize += int(size)/8
+        elapsedTime = time.time() - self.processStartTime
+
+        #cleanup
+        for t, Bsize in self.keyTypeSizeCount.items():
+            self.activeDB = list(self.activeDB)
+            self.activeDB.sort()
+
+        with open('mem_report.txt', 'w') as f:
+            f.write(str(
+                {
+                    "filename": self.filename,
+                    "File size":self.fileSize,
+                    "active DB":self.activeDB,
+                    "Total key":self.totKey,
+                    "Number of key per key type": self.keyTypeCount,
+                    "Total size per key type": self.keyTypeSizeCount
+                }
+                ))
+
+
+        self.Pfinished = True
 
     def add_filename(self, filename):
         self.filename   =   filename
@@ -172,9 +181,6 @@ class RDBObject:
                 ]
             ])
 
-
-
-        F.write(str(to_ret))
         return to_ret
 
     def get_target_redis_servers(self):
@@ -201,6 +207,47 @@ class rdbForm(npyscreen.ActionForm):
     def vspace(self, sp=1):
         self.nextrely += sp
 
+    def while_waiting(self):
+        if RDBOBJECT.processStartTime != 0:
+            self.time_widget.hidden = False
+            self.timeR_widget.hidden = False
+            self.time_pb.hidden = False
+            self.time_widget.display()
+            self.timeR_widget.display()
+            self.time_pb.display()
+            while(not RDBOBJECT.Pfinished): #process not terminated
+                elapsSec    =   time.time()-RDBOBJECT.processStartTime
+                elapsTimeStr=   "{:.2f} min".format(elapsSec/60) if elapsSec >= 60.0 else "{:.2f} sec".format(elapsSec)
+                remTimeStr=   "{:.2f} min".format(RDBOBJECT.estSecs - elapsSec/60) if RDBOBJECT.estSecs - elapsSec >= 60.0 else "{:.2f} sec".format(RDBOBJECT.estSecs - elapsSec)
+                self.time_widget.value = elapsTimeStr
+                self.timeR_widget.value = remTimeStr
+                self.time_pb.value = elapsSec/RDBOBJECT.estSecs*100 if elapsSec/RDBOBJECT.estSecs*100 <= 100 else 99.99
+                self.time_widget.display()
+                self.timeR_widget.display()
+                self.time_pb.display()
+                time.sleep(1)
+
+            RDBOBJECT.memThread.join()
+            if elapsSec < 60:
+                npyscreen.notify_confirm("Elapsed time: {:.2f} sec.\nResult saved in \'mem_report.txt\'.".format(float(elapsSec)), title= 'Info', editw=1)
+            else:
+                npyscreen.notify_confirm("Elapsed time: {:.2f} min.\nResult saved in \'mem_report.txt\'.".format(float(elapsSec)/60.0), title= 'Info', editw=1)
+
+            self.time_widget.hidden = True
+            self.timeR_widget.hidden = True
+            self.time_pb.hidden = True
+            self.time_widget.display()
+            self.timeR_widget.display()
+            self.time_pb.display()
+
+            rdbInfo             =   RDBOBJECT.get_rdb_infos()
+            self.grid.values    =   rdbInfo[1]
+            rdbInfo             =   RDBOBJECT.get_rdb_key_infos()
+            self.grid2.values   =  rdbInfo[1]
+            self.display()
+            RDBOBJECT.processStartTime = 0
+
+
     def create(self):
         self.redisFile  =   self.add(npyscreen.TitleFilenameCombo, name="RDB file to process:")
         if RDBOBJECT.filename:
@@ -208,9 +255,12 @@ class rdbForm(npyscreen.ActionForm):
         self.redisFile.value_changed_callback = self.on_valueChanged
         self.vspace()
 
-        self.btnMemory  =   self.add(npyscreen.ButtonPress, name="Generate memory report", when_pressed_function=self.memReport)
-        self.vspace(3)
-
+        self.btnMemory  =   self.add(npyscreen.ButtonPress, name="Generate memory report", when_pressed_function=RDBOBJECT.execMemoryReport)
+        self.vspace()
+        self.time_widget = self.add(npyscreen.TitleFixedText, name="Elapsed time:", value="", editable=False, hidden=True, color='STANDOUT') 
+        self.timeR_widget = self.add(npyscreen.TitleFixedText, name="Estimated remaining time:", max_width=30, value="", editable=False, hidden=True, color='STANDOUT') 
+        self.time_pb  = self.add(npyscreen.TitleSliderPercent, out_of=100, value=0, name="Estimated progress:", editable=False, hidden=True)
+        self.vspace(1)
 
         rdbInfo = RDBOBJECT.get_rdb_infos()
         self.add(npyscreen.FixedText, value="RDB file information:", editable=False, color='LABEL')
@@ -230,20 +280,10 @@ class rdbForm(npyscreen.ActionForm):
                 value   =   RDBOBJECT.get_seleced_db(), 
                 values  =   RDBOBJECT.get_16_db())
         self.vspace()
-        self.chosenServer=  self.add(npyscreen.TitleMultiSelect, max_height=10, rely=23, relx=self.chosenDb.width+10,
+        self.chosenServer=  self.add(npyscreen.TitleMultiSelect, max_height=10, rely=27, relx=self.chosenDb.width+10,
                 name    =   "Select Redis server in which to inject:", 
                 value   =   RDBOBJECT.get_target_redis_servers_indexes(), 
                 values  =   RDBOBJECT.list_running_servers())
-        self.vspace()
-
-    def memReport(self):
-        RDBOBJECT.execMemoryReport()
-        rdbInfo = RDBOBJECT.get_rdb_infos()
-        self.grid.values = rdbInfo[1]
-        rdbInfo = RDBOBJECT.get_rdb_key_infos()
-        self.grid2.values = rdbInfo[1]
-        self.grid.display()
-        self.grid2.display()
 
     def on_valueChanged(self, *args, **keywords):
         if self.redisFile.value:
@@ -350,6 +390,8 @@ class confirmForm(npyscreen.ActionForm):
         sys.exit(1)
 
 class MyApplication(npyscreen.NPSAppManaged):
+    keypress_timeout_default = 10 
+
     def onStart(self):
         self.addFormClass('MAIN', rdbForm, name='RDB to Redis Server')
         self.addFormClass('FILTER', filterForm, name='Filter')
