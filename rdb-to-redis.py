@@ -317,7 +317,7 @@ class filterForm(npyscreen.ActionForm):
         self.vspace(2)
         self.add(npyscreen.TitleFixedText, name='Select redis database for which this regex applies:', 
                 value='', editable=False)
-        self.tree   =   self.add(npyscreen.MLTreeMultiSelect)
+        self.tree   =   self.add(npyscreen.MLTreeMultiSelect, max_height=10, max_width=30)
         treedata    =   npyscreen.NPSTreeData(content='Redis servers', selectable=False, ignoreRoot=False)
         for serv in RDBOBJECT.get_target_redis_servers():
             n = treedata.newChild(content=serv, selectable=True)
@@ -326,7 +326,7 @@ class filterForm(npyscreen.ActionForm):
 
         self.tree.values = treedata
 
-        self.add_button = self.add(npyscreen.ButtonPress, name = 'Add', relx = 20,rely = 25)
+        self.add_button = self.add(npyscreen.ButtonPress, name = 'Add', relx = 35,rely = 7)
         self.add_button.whenPressed = self.addReg
 
 
@@ -375,12 +375,7 @@ class confirmForm(npyscreen.ActionForm):
             box.values = RDBOBJECT.get_regexes_from_server(serv)
             i += 1
 
-        #self.box1 = self.add(npyscreen.BoxTitle, name='*:8888', max_width=20, relx=2, max_height=15, editable=False)
-        #self.box2 = self.add(npyscreen.BoxTitle, name='*:6379', max_width=20, rely=curY, relx=22, max_height=15, editable= False,
-        #        contained_widget_arguments={
-        #            })
         curY += 17
-        #self.box2.values = ["regex1", "regex2"]
 
 
     def on_cancel(self):
