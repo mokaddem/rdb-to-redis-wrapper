@@ -1,6 +1,6 @@
 # rdb-to-redis-wrapper
 
-A TUI interface to easily inject keys from RDB file into a running Redis server.
+A TUI interface to easily inject keys from a RDB file into a running Redis server.
 
 ## Installation
 
