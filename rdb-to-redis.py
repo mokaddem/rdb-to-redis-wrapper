@@ -17,13 +17,12 @@ MEMORY_REPORT_COMMAND = r"rdb -c memory {}"
 F = open('log', 'a')
 
 op_type_mapping = {
-        'SET':     'SADD',
-        'STRING':      'SET',
+        'SET':      'SADD',
+        'STRING':   'SET',
         'ZSET':     'ZADD',
         'GEOSET':   'GEOADD',
         'HSET':     'HSET',
-        #'HMSET':    'SET',
-        #'PFADD':    'SET',
+        'PFADD':    'HYPERLOGLOG',
         'LIST':     'LSET',
         }
 
@@ -38,6 +37,7 @@ class RDBObject:
     def __init__(self):
         self.filename   =   None
         self.target_server  =   {}
+        self.target_server_type  =   {}
         self.target_server_indexes = []
         self.rdbDbs =           []      
         self.fileSize   =   0.0
@@ -140,10 +140,16 @@ class RDBObject:
     def add_selected_db(self, dbs):
         self.rdbDbs = dbs
 
+    def add_selected_key_type(self, serverList, keyTypeList):
+        for serv in serverList:
+            for typ in keyTypeList:
+                self.target_server_type[serv].append(typ)
+
     def add_target_redis_servers(self, server_list):
         self.target_server = {}
         for serv in server_list:
             self.target_server[serv] = []
+            self.target_server_type[serv] = []
 
     def add_target_redis_servers_indexes(self, index_list):
         self.target_server_indexes = index_list
@@ -157,6 +163,18 @@ class RDBObject:
     def list_running_servers(self):
         p = Popen([RUNNING_REDIS_SERVER_NAME_COMMAND], stdin=PIPE, stdout=PIPE, bufsize=1, shell=True)
         return [serv.decode('ascii') for serv in p.stdout.read().splitlines()]
+
+    def list_keyType(self):
+        to_ret = [
+                 "STRING",
+                 "SET",
+                 "ZSET",
+                 "HSET",
+                 "LIST"
+                 "GEOSET",
+                 "PFADD",
+                ]
+        return to_ret
 
     def get_activeDB(self):
         return self.activeDB
@@ -243,6 +261,8 @@ class RDBObject:
         to_ret.append([data1, data2])
         return to_ret
 
+    def get_servers_with_regex(self):
+        return self.target_server
 
     def get_target_redis_servers(self):
         the_list = list(self.target_server.keys())
@@ -254,8 +274,11 @@ class RDBObject:
     def get_target_redis_servers_indexes(self):
         return list(self.target_server_indexes)
 
-    def get_seleced_db(self):
+    def get_selected_db(self):
         return self.rdbDbs
+
+    def get_selected_type(self):
+        return self.target_server_type
 
     def get_16_db(self):
         return [int(db) for db in range(16)]
@@ -340,7 +363,6 @@ class rdbForm(npyscreen.ActionForm):
                 col_titles=rdbInfo[0],
                 values=rdbInfo[1])
 
-        #self.keyPerDbWidget = self.add(npyscreen.TitleFixedText, name="Key per database:", value=RDBOBJECT.keyPerDBStr, editable=False)
         rdbInfoDB = RDBOBJECT.get_rdb_DB_infos()
         self.grid_db = self.add(npyscreen.GridColTitles, editable=False, max_height=5, hidden=True,
                 col_titles=rdbInfoDB[0],
@@ -354,7 +376,7 @@ class rdbForm(npyscreen.ActionForm):
         self.vspace(3)
         self.chosenDb   =   self.add(npyscreen.TitleMultiSelect, max_height=15+3, max_width=30,
                 name    =   "Select DB Number from file:", 
-                value   =   RDBOBJECT.get_seleced_db(), 
+                value   =   RDBOBJECT.get_selected_db(), 
                 values  =   RDBOBJECT.get_16_db())
         self.vspace()
         self.chosenServer=  self.add(npyscreen.TitleMultiSelect, max_height=10, rely=32, relx=self.chosenDb.width+10,
@@ -390,6 +412,12 @@ class filterForm(npyscreen.ActionForm):
         self.nextrely += sp
 
     def create(self):
+        self.chosenType=  self.add(npyscreen.TitleMultiSelect, max_height=10, max_width=40,
+                name    =   "Select type from the RDB file to be imported:", 
+                value   =   [x for x in range(len(RDBOBJECT.list_keyType()))], 
+                values  =   RDBOBJECT.list_keyType())
+        self.vspace()
+
         self.regex  =   self.add(npyscreen.TitleText, name='Regex:', value='')
         self.vspace(2)
         self.add(npyscreen.TitleFixedText, name='Select redis database for which this regex applies:', 
@@ -400,23 +428,32 @@ class filterForm(npyscreen.ActionForm):
             n = treedata.newChild(content=serv, selectable=True)
             for r in RDBOBJECT.get_regexes_from_server(serv):
                 n.newChild(content=r, selectable=False)
+            n.newChild(content=RDBOBJECT.get_selected_type()[serv], selectable=False)
 
         self.tree.values = treedata
 
-        self.add_button = self.add(npyscreen.ButtonPress, name = 'Add', relx = 85,rely = 7)
-        self.add_button.whenPressed = self.addReg
+        self.add_button = self.add(npyscreen.ButtonPress, name = 'Add', relx = self.tree.width+10, rely = 19)
+        self.add_button.whenPressed = self.addRegType
 
 
-    def addReg(self):
+    def addRegType(self):
+        #regex
         selected = self.tree.get_selected_objects(return_node=False)
+        selected =[x for x in selected]
         regVal = self.regex.value
-        RDBOBJECT.add_regex_to_servers(regVal, [x for x in selected])
+        if regVal is not "":
+            RDBOBJECT.add_regex_to_servers(regVal, selected)
+
+        #type
+        selected_type = self.chosenType.get_selected_objects()
+        RDBOBJECT.add_selected_key_type(selected, selected_type)
 
         treedata    =   npyscreen.NPSTreeData(content='Redis servers', selectable=False, ignoreRoot=False)
         for serv in RDBOBJECT.get_target_redis_servers():
             n = treedata.newChild(content=serv, selectable=True)
             for r in RDBOBJECT.get_regexes_from_server(serv):
                 n.newChild(content=r, selectable=False)
+            n.newChild(content=RDBOBJECT.get_selected_type()[serv], selectable=False)
 
         self.tree.values = treedata
         self.regex.value = ''
@@ -438,20 +475,15 @@ class confirmForm(npyscreen.ActionForm):
     def create(self):
         curY = 0
         self.rdbFile = self.add(npyscreen.BoxTitle, name='RDB file', relx=2, max_height=8, editable=False,
-                values=["Redis database processed:", "    "+str(RDBOBJECT.get_seleced_db())]
+                values=["Database to be processed:", "    "+str(RDBOBJECT.get_selected_db())]
                 )
         self.vspace(2)
         curY += 11
 
-        boxsize = RDBOBJECT.regexMaxSize+8
         i=0
         for serv in RDBOBJECT.get_target_redis_servers():
-            if boxsize < 40:
-                box = self.add(npyscreen.BoxTitle, name=serv, max_width=boxsize, rely=curY, relx=2+i*boxsize, max_height=7, editable= False)
-            else:
-                box = self.add(npyscreen.BoxTitle, name=serv, max_width=boxsize, relx=2, max_height=7, editable= False)
-
-            box.values = RDBOBJECT.get_regexes_from_server(serv)
+            box = self.add(npyscreen.BoxTitle, name=serv, relx=2, max_height=7, editable= False)
+            box.values = RDBOBJECT.get_regexes_from_server(serv)+[str(RDBOBJECT.get_selected_type()[serv])]
             i += 1
 
         curY += 17
@@ -613,9 +645,11 @@ if __name__ == "__main__":
 
     App = MyApplication()
     App.run()
+    print(RDBOBJECT.get_selected_db(), RDBOBJECT.get_selected_type(), RDBOBJECT.get_servers_with_regex(), True)
     serv_to_reg = {'*:8889': ['([A-Za-z])\w+'], '*:8888': ['([A-Za-z])\w+']}
     serv_to_type = {'*:8889': ['SET', 'STRING', 'HSET'], '*:8888': ['ZSET', 'SET']}
     #inject(serv_to_reg, serv_to_type, [1,2,3,4,5], True)
+    inject(RDBOBJECT.get_servers_with_regex(), RDBOBJECT.get_selected_type(), RDBOBJECT.get_selected_db(), True)
 
 
 
