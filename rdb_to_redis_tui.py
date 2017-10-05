@@ -1,30 +1,13 @@
-#!/usr/bin/env python3.5
-# -*-coding:UTF-8 -*
-
-import npyscreen, curses
-import sys, os, time
-import time, datetime
-import argparse
-import json
-import redis
+import npyscreen
+import sys, os
+import time
 from subprocess import PIPE, Popen
 import threading
-import re
 
 RDBOBJECT = None
+
 RUNNING_REDIS_SERVER_NAME_COMMAND = rb"ps aux | grep redis-server | cut -d. -f4 | cut -s -d ' ' -f2 | grep :"
 MEMORY_REPORT_COMMAND = r"rdb -c memory {}"
-F = open('log', 'a')
-
-op_type_mapping = {
-        'SET':      'SADD',
-        'STRING':   'SET',
-        'ZSET':     'ZADD',
-        'GEOSET':   'GEOADD',
-        'HSET':     'HSET',
-        'PFADD':    'HYPERLOGLOG',
-        'LIST':     'LSET',
-        }
 
 def sizeof_fmt(num, suffix='B'):
     for unit in ['','Ki','Mi','Gi','Ti','Pi','Ei','Zi']:
@@ -32,6 +15,7 @@ def sizeof_fmt(num, suffix='B'):
             return "%3.1f%s%s" % (num, unit, suffix)
         num /= 1024.0
     return "%.1f%s%s" % (num, 'Yi', suffix)
+
 
 class RDBObject:
     def __init__(self):
@@ -168,7 +152,13 @@ class RDBObject:
 
     def list_running_servers(self):
         p = Popen([RUNNING_REDIS_SERVER_NAME_COMMAND], stdin=PIPE, stdout=PIPE, bufsize=1, shell=True)
-        return [serv.decode('ascii') for serv in p.stdout.read().splitlines()]
+        res = [serv.decode('ascii') for serv in p.stdout.read().splitlines()]
+        index_list = []
+        for i, serverName in enumerate(res):
+            if serverName in self.target_server.keys():
+                self.target_server_indexes.append(i)
+
+        return res
 
     def list_keyType(self):
         to_ret = [
@@ -290,6 +280,7 @@ class RDBObject:
         return [int(db) for db in range(16)]
 
 
+
 '''
 Screen 1
 '''
@@ -387,8 +378,8 @@ class rdbForm(npyscreen.ActionForm):
         self.vspace()
         self.chosenServer=  self.add(npyscreen.TitleMultiSelect, max_height=10, rely=32, relx=self.chosenDb.width+10,
                 name    =   "Select Redis server in which to inject:", 
-                value   =   RDBOBJECT.get_target_redis_servers_indexes(), 
-                values  =   RDBOBJECT.list_running_servers())
+                values  =   RDBOBJECT.list_running_servers(),
+                value   =   RDBOBJECT.get_target_redis_servers_indexes())
 
     def on_valueChanged(self, *args, **keywords):
         if self.redisFile.value:
@@ -522,157 +513,5 @@ class MyApplication(npyscreen.NPSAppManaged):
         self.addFormClass('MAIN', rdbForm, name='RDB to Redis Server')
         self.addFormClass('FILTER', filterForm, name='Filter')
         self.addFormClass('CONFIRM', confirmForm, name='Confirm')
-        #self.addForm('MAIN', filterForm, name='Filtering')
 
 
-def inject(filename, serv_to_reg, serv_to_type, db_list, keep_db_organsization):
-    cmd = ["rdb","--c", "protocol", filename]
-    for db in db_list:
-        cmd += ["--db"]
-        cmd += [str(db)]
-
-    p_rdb=Popen(cmd, stdin=PIPE, stdout=PIPE)
-    p_cli_tab = {}
-
-    #compile reg, inverse dico reg
-    reg_to_serv = {}
-    compiled_reg= {}
-    for serv, reg_list in serv_to_reg.items():
-        hostname, port = serv.split(':')
-        p_cli_tab[serv] = Popen(["../redis/src/redis-cli","--pipe", "-h", hostname, "-p", port], stdin=PIPE, stdout=PIPE)
-        for reg in reg_list:
-            if reg not in reg_to_serv:
-                reg_to_serv[reg] = []
-                compiled_reg[reg] = re.compile(reg)
-            reg_to_serv[reg].append(serv)
-
-    #inverse dico type
-    op_type_to_serv = {}
-    for serv, type_list in serv_to_type.items():
-        for typ in type_list:
-            type_mapped = op_type_mapping[typ]
-            if type_mapped not in op_type_to_serv:
-                op_type_to_serv[type_mapped] = []
-            op_type_to_serv[type_mapped].append(serv)
-
-
-    ##Process the file
-    time_s = time.time()
-    last_updated = 0.0
-    cur_db_num = 0
-    processed_key = 0
-    inject_key = 0
-    for arg in p_rdb.stdout:
-        to_send = b''
-        #arg = p_rdb.stdout.readline()
-        to_send += arg
-        left = int(arg[1:])*2 #remaining num of line
-
-        if '*2' in arg.decode():
-
-            for x in range(3):#consume 3 time
-                to_send += p_rdb.stdout.readline()
-
-            cur_db_num = p_rdb.stdout.readline()
-            to_send += cur_db_num
-            cur_db_num = int(cur_db_num[:-2])
-            left -= 4
-
-            #change DB num
-            if keep_db_organsization:
-                for i in range(left):
-                    to_send += p_rdb.stdout.readline()
-
-                #change db on all server
-                for serv in serv_to_type.keys():
-                    p_cli_tab[serv].stdin.write(to_send)
-                    p_cli_tab[serv].stdin.flush()
-                continue
-            else:
-                continue #skip db
-
-
-        #consume lines
-        to_send += p_rdb.stdout.readline() # length
-        left -= 1
-
-        op_type = p_rdb.stdout.readline() 
-        to_send += op_type
-        op_type = op_type[:-2].decode()
-        left -= 1
-        to_send += p_rdb.stdout.readline() # length
-        left -= 1
-        key = p_rdb.stdout.readline() 
-        to_send += key
-        key = key[:-2].decode()
-        left -= 1
-
-        for i in range(left):
-            to_send += p_rdb.stdout.readline()
-
-        #filter & redirect
-        #Apply key type
-        processed_key += 1
-        if op_type in op_type_to_serv:
-            for serv in op_type_to_serv[op_type]:
-
-                #Apply regex
-                if len(compiled_reg) == 0: #no regex provided, send anyway
-                    for serv in serv_to_reg.keys():
-                        p_cli_tab[serv].stdin.write(to_send)
-                        inject_key += 1
-
-                else:
-                    for regName, regComp in compiled_reg.items():
-                        if regComp.search(key): #if 1 and only 1 match
-                            #Apply redirect
-                            for serv in reg_to_serv[regName]:
-                                p_cli_tab[serv].stdin.write(to_send)
-                            inject_key += 1
-
-        #Print progress
-        now = time.time()
-        duration = now - time_s
-        if now - last_updated >= 1.0:
-            last_updated = now
-            duration_str = "{:.2f} min".format(duration/60) if duration >= 60.0 else "{:.2f} sec".format(duration)
-            print('Current DB: {}, Elapsed time: {}, Processed key: {}, Injected item: {}'.format(cur_db_num, duration_str, processed_key, inject_key), sep=' ', end='\r', flush=True)
-
-    else:
-        duration = time.time()-time_s
-        print()
-        print('Data injected. Duration: {:.2f}s ({:.2f}min)'.format(duration, duration/60))
-
-
-if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description='Read rdb file and copy wanted content into a running redis server.')
-    parser.add_argument('-f', '--filename', required=False, dest='rdbFile', help='The RDB file from which data must be copied')
-    parser.add_argument('-d', '--db', required=False, type=str, default='0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15', dest='redisDb', help='The RDB databases number in which data must be taken')
-    parser.add_argument('-r', '--redisServer', required=False, type=str, dest='redisServer', help='The redis server in which data must be copied')
-
-    args = parser.parse_args()
-
-    RDBOBJECT = RDBObject()
-    if args.rdbFile:
-        RDBOBJECT.add_filename(args.rdbFile)
-    if args.redisServer:
-        args.redisServer = [int(item) for item in args.redisServer.split(',')]
-        RDBOBJECT.add_target_redis_servers(args.redisServer)
-    if args.redisDb:
-        args.redisDb = [int(item) for item in args.redisDb.split(',')]
-        int_db = [int(db) for db in args.redisDb]
-        RDBOBJECT.add_selected_db(int_db)
-
-    App = MyApplication()
-    App.run()
-    inject(RDBOBJECT.filename, RDBOBJECT.get_servers_with_regex(), RDBOBJECT.get_selected_type(), RDBOBJECT.get_selected_db(), True)
-
-    '''
-    filename = "dump6382.rdb"
-    inject(
-    filename,
-    {'*:8888': ['TopTermFreq_set_day_'], '*:8889': ['per_paste_']},
-    {'*:8888': ['STRING', 'SET', 'ZSET', 'HSET', 'LIST', 'GEOSET', 'PFADD'], '*:8889': ['STRING', 'SET', 'ZSET', 'HSET', 'LIST', 'GEOSET', 'PFADD']},
-    [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15],
-    True)
-    '''
