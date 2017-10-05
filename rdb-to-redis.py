@@ -51,6 +51,7 @@ class RDBObject:
         self.totKey     =   '?'
         self.keyTypeCount=  {'string': '?', 'hash': '?', 'set': '?', 'sortedset': '?', 'list': '?'}
         self.keyTypeSizeCount=  {'string': '?', 'hash': '?', 'set': '?', 'sortedset': '?', 'list': '?'}
+        self.sizeByDB   =   {}
 
     def execMemoryReport(self):
         self.cmd = MEMORY_REPORT_COMMAND.format(self.filename)
@@ -85,7 +86,7 @@ class RDBObject:
         report = report.splitlines()
         for line in report[1:]:
             tab     =   line.split(',')
-            db      =   tab[0]
+            db      =   int(tab[0])
             kType   =   tab[1]
             k       =   tab[2]
             size    =   tab[3]
@@ -96,11 +97,13 @@ class RDBObject:
             self.activeDB.add(db)
             if db not in self.keyPerDB:
                 self.keyPerDB[db] = 0
+                self.sizeByDB[db] = 0
             self.totKey += 1
             self.keyTypeCount[kType]    += 1
             self.keyPerDB[db] += 1
             self.keyTypeSizeCount[kType]+= int(size)/8
             self.totKeySize += int(size)/8
+            self.sizeByDB[db] += int(size)/8
         elapsedTime = time.time() - self.processStartTime
 
         #cleanup
@@ -172,7 +175,6 @@ class RDBObject:
     def get_rdb_key_infos(self):
         to_ret = []
         to_ret.append(['', 'String', 'Hash', 'Set', 'Sortedset', 'List'])
-        data = []
 
         if self.totKey == 0 or self.totKey == '?':
             to_ret.append([
@@ -210,6 +212,38 @@ class RDBObject:
 
         return to_ret
 
+    def get_rdb_DB_infos(self):
+        to_ret = []
+        db_str = [str(x) for x in self.sizeByDB.keys()]
+        to_ret.append(['DB']+db_str)
+
+        data1 = ["Size"]
+        if len(self.sizeByDB) == 0:
+            for db in self.get_16_db():
+                data1.append('?')
+        else:
+            for db in self.sizeByDB.keys():
+                try:
+                    data1.append(sizeof_fmt(self.sizeByDB[db]))
+                except KeyError: #no database
+                    data1.append(sizeof_fmt(0.0))
+
+
+        data2 = ["Keys"]
+        if len(self.sizeByDB) == 0:
+            for db in self.get_16_db():
+                data2.append('?')
+        else:
+            for db in self.sizeByDB.keys():
+                try:
+                    data2.append(str(self.keyPerDB[db]))
+                except KeyError: #no database
+                    data1.append(sizeof_fmt(0.0))
+
+        to_ret.append([data1, data2])
+        return to_ret
+
+
     def get_target_redis_servers(self):
         the_list = list(self.target_server.keys())
         if len(the_list) > 0:
@@ -239,6 +273,8 @@ class rdbForm(npyscreen.ActionForm):
             self.time_widget.hidden = False
             self.timeR_widget.hidden = False
             self.time_pb.hidden = False
+            self.grid_db.hidden = False
+            self.grid2.hidden = False
 
             self.time_widget.display()
             self.timeR_widget.display()
@@ -269,11 +305,16 @@ class rdbForm(npyscreen.ActionForm):
 
             rdbInfo             =   RDBOBJECT.get_rdb_infos()
             self.grid.values    =   rdbInfo[1]
+
+            rdbInfoDB           =   RDBOBJECT.get_rdb_DB_infos()
+            self.grid_db.col_titles=   rdbInfoDB[0]
+            self.grid_db.values =   rdbInfoDB[1]
+
             rdbInfo             =   RDBOBJECT.get_rdb_key_infos()
             self.grid2.values   =   rdbInfo[1]
+
             self.chosenDb.values = RDBOBJECT.get_activeDB()
             self.chosenDb.value  = [x for x in range(len(self.chosenDb.values))]
-            self.keyPerDbWidget.value = RDBOBJECT.keyPerDBStr
 
             self.display()
             RDBOBJECT.processStartTime = 0
@@ -295,25 +336,28 @@ class rdbForm(npyscreen.ActionForm):
 
         rdbInfo = RDBOBJECT.get_rdb_infos()
         self.add(npyscreen.FixedText, value="RDB file information:", editable=False, color='LABEL')
-        self.grid = self.add(npyscreen.GridColTitles, editable=False, columns=3, max_height=5,
+        self.grid = self.add(npyscreen.GridColTitles, editable=False, columns=3, max_height=5, 
                 col_titles=rdbInfo[0],
                 values=rdbInfo[1])
 
-        self.keyPerDbWidget = self.add(npyscreen.TitleFixedText, name="Key per database:", value=RDBOBJECT.keyPerDBStr, editable=False)
-        self.vspace()
+        #self.keyPerDbWidget = self.add(npyscreen.TitleFixedText, name="Key per database:", value=RDBOBJECT.keyPerDBStr, editable=False)
+        rdbInfoDB = RDBOBJECT.get_rdb_DB_infos()
+        self.grid_db = self.add(npyscreen.GridColTitles, editable=False, max_height=5, hidden=True,
+                col_titles=rdbInfoDB[0],
+                values=rdbInfoDB[1])
 
         rdbInfo = RDBOBJECT.get_rdb_key_infos()
-        self.grid2 = self.add(npyscreen.GridColTitles, editable=False, columns=6, max_height=5,
+        self.grid2 = self.add(npyscreen.GridColTitles, editable=False, columns=6, max_height=5, hidden=True,
                 col_titles=rdbInfo[0],
                 values=rdbInfo[1])
 
         self.vspace(3)
         self.chosenDb   =   self.add(npyscreen.TitleMultiSelect, max_height=15+3, max_width=30,
-                name="Select DB Number from file:", 
+                name    =   "Select DB Number from file:", 
                 value   =   RDBOBJECT.get_seleced_db(), 
                 values  =   RDBOBJECT.get_16_db())
         self.vspace()
-        self.chosenServer=  self.add(npyscreen.TitleMultiSelect, max_height=10, rely=30, relx=self.chosenDb.width+10,
+        self.chosenServer=  self.add(npyscreen.TitleMultiSelect, max_height=10, rely=32, relx=self.chosenDb.width+10,
                 name    =   "Select Redis server in which to inject:", 
                 value   =   RDBOBJECT.get_target_redis_servers_indexes(), 
                 values  =   RDBOBJECT.list_running_servers())
@@ -564,13 +608,14 @@ if __name__ == "__main__":
         RDBOBJECT.add_target_redis_servers(args.redisServer)
     if args.redisDb:
         args.redisDb = [int(item) for item in args.redisDb.split(',')]
-        RDBOBJECT.add_selected_db(args.redisDb)
+        int_db = [int(db) for db in args.redisDb]
+        RDBOBJECT.add_selected_db(int_db)
 
-    #App = MyApplication()
-    #App.run()
+    App = MyApplication()
+    App.run()
     serv_to_reg = {'*:8889': ['([A-Za-z])\w+'], '*:8888': ['([A-Za-z])\w+']}
     serv_to_type = {'*:8889': ['SET', 'STRING', 'HSET'], '*:8888': ['ZSET', 'SET']}
-    inject(serv_to_reg, serv_to_type, [1,2,3,4,5], True)
+    #inject(serv_to_reg, serv_to_type, [1,2,3,4,5], True)
 
 
 
