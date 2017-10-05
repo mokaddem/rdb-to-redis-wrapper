@@ -9,11 +9,23 @@ import json
 import redis
 from subprocess import PIPE, Popen
 import threading
+import re
 
 RDBOBJECT = None
 RUNNING_REDIS_SERVER_NAME_COMMAND = rb"ps aux | grep redis-server | cut -d. -f4 | cut -s -d ' ' -f2 | grep :"
 MEMORY_REPORT_COMMAND = r"rdb -c memory {}"
 F = open('log', 'a')
+
+op_type_mapping = {
+        'SET':     'SADD',
+        'STRING':      'SET',
+        'ZSET':     'ZADD',
+        'GEOSET':   'GEOADD',
+        'HSET':     'HSET',
+        #'HMSET':    'SET',
+        #'PFADD':    'SET',
+        'LIST':     'LSET',
+        }
 
 def sizeof_fmt(num, suffix='B'):
     for unit in ['','Ki','Mi','Gi','Ti','Pi','Ei','Zi']:
@@ -34,6 +46,8 @@ class RDBObject:
 
         #after memory report (type change after MemReport)
         self.activeDB   =   '?'
+        self.keyPerDB   =   '?'
+        self.keyPerDBStr=   '?'
         self.totKey     =   '?'
         self.keyTypeCount=  {'string': '?', 'hash': '?', 'set': '?', 'sortedset': '?', 'list': '?'}
         self.keyTypeSizeCount=  {'string': '?', 'hash': '?', 'set': '?', 'sortedset': '?', 'list': '?'}
@@ -48,6 +62,7 @@ class RDBObject:
         if start:
             #set correct types
             self.activeDB   =   set()
+            self.keyPerDB   =   {}
             self.totKey     =   0
             self.keyTypeCount=  {'string': 0, 'hash': 0, 'set': 0, 'sortedset': 0, 'list': 0}
             self.keyTypeSizeCount=  {'string': 0, 'hash': 0, 'set': 0, 'sortedset': 0, 'list': 0}
@@ -79,8 +94,11 @@ class RDBObject:
             largElem=   tab[6]
 
             self.activeDB.add(db)
+            if db not in self.keyPerDB:
+                self.keyPerDB[db] = 0
             self.totKey += 1
             self.keyTypeCount[kType]    += 1
+            self.keyPerDB[db] += 1
             self.keyTypeSizeCount[kType]+= int(size)/8
             self.totKeySize += int(size)/8
         elapsedTime = time.time() - self.processStartTime
@@ -89,6 +107,12 @@ class RDBObject:
         for t, Bsize in self.keyTypeSizeCount.items():
             self.activeDB = list(self.activeDB)
             self.activeDB.sort()
+            self.keyPerDBStr = "["
+            for db in self.activeDB:
+                self.keyPerDBStr += "{}: {}".format(db, self.keyPerDB[db])
+                self.keyPerDBStr += ", "
+            self.keyPerDBStr = self.keyPerDBStr[:-2]
+            self.keyPerDBStr += "]"
 
         with open('mem_report.txt', 'w') as f:
             f.write(str(
@@ -249,6 +273,7 @@ class rdbForm(npyscreen.ActionForm):
             self.grid2.values   =   rdbInfo[1]
             self.chosenDb.values = RDBOBJECT.get_activeDB()
             self.chosenDb.value  = [x for x in range(len(self.chosenDb.values))]
+            self.keyPerDbWidget.value = RDBOBJECT.keyPerDBStr
 
             self.display()
             RDBOBJECT.processStartTime = 0
@@ -274,6 +299,9 @@ class rdbForm(npyscreen.ActionForm):
                 col_titles=rdbInfo[0],
                 values=rdbInfo[1])
 
+        self.keyPerDbWidget = self.add(npyscreen.TitleFixedText, name="Key per database:", value=RDBOBJECT.keyPerDBStr, editable=False)
+        self.vspace()
+
         rdbInfo = RDBOBJECT.get_rdb_key_infos()
         self.grid2 = self.add(npyscreen.GridColTitles, editable=False, columns=6, max_height=5,
                 col_titles=rdbInfo[0],
@@ -285,7 +313,7 @@ class rdbForm(npyscreen.ActionForm):
                 value   =   RDBOBJECT.get_seleced_db(), 
                 values  =   RDBOBJECT.get_16_db())
         self.vspace()
-        self.chosenServer=  self.add(npyscreen.TitleMultiSelect, max_height=10, rely=27, relx=self.chosenDb.width+10,
+        self.chosenServer=  self.add(npyscreen.TitleMultiSelect, max_height=10, rely=30, relx=self.chosenDb.width+10,
                 name    =   "Select Redis server in which to inject:", 
                 value   =   RDBOBJECT.get_target_redis_servers_indexes(), 
                 values  =   RDBOBJECT.list_running_servers())
@@ -389,7 +417,7 @@ class confirmForm(npyscreen.ActionForm):
         self.parentApp.switchForm('FILTER')
 
     def on_ok(self):
-        sys.exit(1)
+        self.parentApp.setNextForm(None)
 
 class MyApplication(npyscreen.NPSAppManaged):
     keypress_timeout_default = 10 
@@ -399,6 +427,126 @@ class MyApplication(npyscreen.NPSAppManaged):
         self.addFormClass('FILTER', filterForm, name='Filter')
         self.addFormClass('CONFIRM', confirmForm, name='Confirm')
         #self.addForm('MAIN', filterForm, name='Filtering')
+
+
+def inject(serv_to_reg, serv_to_type, db_list, keep_db_organsization):
+    cmd = ["rdb","--c", "protocol", "dump6382.rdb"]
+    for db in db_list:
+        cmd += ["--db"]
+        cmd += [str(db)]
+
+    p_rdb=Popen(cmd, stdin=PIPE, stdout=PIPE)
+    p_cli_tab = {}
+
+    #compile reg, inverse dico reg
+    reg_to_serv = {}
+    compiled_reg= {}
+    for serv, reg_list in serv_to_reg.items():
+        hostname, port = serv.split(':')
+        p_cli_tab[serv] = Popen(["../redis/src/redis-cli","--pipe", "-h", hostname, "-p", port], stdin=PIPE, stdout=PIPE)
+        for reg in reg_list:
+            if reg not in reg_to_serv:
+                reg_to_serv[reg] = []
+                compiled_reg[reg] = re.compile(reg)
+            reg_to_serv[reg].append(serv)
+
+    #inverse dico type
+    op_type_to_serv = {}
+    for serv, type_list in serv_to_type.items():
+        for typ in type_list:
+            type_mapped = op_type_mapping[typ]
+            if type_mapped not in op_type_to_serv:
+                op_type_to_serv[type_mapped] = []
+            op_type_to_serv[type_mapped].append(serv)
+
+
+    ##Process the file
+    time_s = time.time()
+    last_updated = 0.0
+    cur_db_num = 0
+    processed_key = 0
+    inject_key = 0
+    for arg in p_rdb.stdout:
+        to_send = b''
+        #arg = p_rdb.stdout.readline()
+        to_send += arg
+        left = int(arg[1:])*2 #remaining num of line
+
+        if '*2' in arg.decode():
+
+            for x in range(3):#consume 3 time
+                to_send += p_rdb.stdout.readline()
+
+            cur_db_num = p_rdb.stdout.readline()
+            to_send += cur_db_num
+            cur_db_num = int(cur_db_num[:-2])
+            left -= 4
+
+            #change DB num
+            if keep_db_organsization:
+                for i in range(left):
+                    to_send += p_rdb.stdout.readline()
+
+                #change db on all server
+                for serv in serv_to_type.keys():
+                    p_cli_tab[serv].stdin.write(to_send)
+                    p_cli_tab[serv].stdin.flush()
+                continue
+            else:
+                continue #skip db
+
+
+        #consume lines
+        to_send += p_rdb.stdout.readline() # length
+        left -= 1
+
+        op_type = p_rdb.stdout.readline() 
+        to_send += op_type
+        op_type = op_type[:-2].decode()
+        left -= 1
+        to_send += p_rdb.stdout.readline() # length
+        left -= 1
+        key = p_rdb.stdout.readline() 
+        to_send += key
+        key = key[:-2].decode()
+        left -= 1
+
+        for i in range(left):
+            to_send += p_rdb.stdout.readline()
+
+        #filter & redirect
+        #Apply key type
+        processed_key += 1
+        if op_type in op_type_to_serv:
+            for serv in op_type_to_serv[op_type]:
+
+                #Apply regex
+                if len(compiled_reg) == 0: #no regex provided, send anyway
+                    for serv in serv_to_reg.keys():
+                        p_cli_tab[serv].stdin.write(to_send)
+                        inject_key += 1
+
+                else:
+                    for regName, regComp in compiled_reg.items():
+                        if len(regComp.findall(key)) == 1: #if 1 and only 1 match
+                            #Apply redirect
+                            for serv in reg_to_serv[regName]:
+                                p_cli_tab[serv].stdin.write(to_send)
+                            inject_key += 1
+
+        #Print progress
+        now = time.time()
+        duration = now - time_s
+        if now - last_updated >= 1.0:
+            last_updated = now
+            duration_str = "{:.2f} min".format(duration/60) if duration >= 60.0 else "{:.2f} sec".format(duration)
+            print('Current DB: {}, Elapsed time: {}, Processed key: {}, Injected key: {}'.format(cur_db_num, duration_str, processed_key, inject_key), sep=' ', end='\r', flush=True)
+
+    else:
+        duration = time.time()-time_s
+        print()
+        print('Data injected. Duration: {:.2f}s ({:.2f}min)'.format(duration, duration/60))
+
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Read rdb file and copy wanted content into a running redis server.')
@@ -418,34 +566,27 @@ if __name__ == "__main__":
         args.redisDb = [int(item) for item in args.redisDb.split(',')]
         RDBOBJECT.add_selected_db(args.redisDb)
 
-    App = MyApplication()
-    App.run()
-
-    # REDIS #
-    #servers = []
-    #for i in range(15):
-    #    server = redis.StrictRedis(
-    #        host='localhost',
-    #        port=args.redisPort,
-    #        db=i)
-    #    servers.append(server)
+    #App = MyApplication()
+    #App.run()
+    serv_to_reg = {'*:8889': ['([A-Za-z])\w+'], '*:8888': ['([A-Za-z])\w+']}
+    serv_to_type = {'*:8889': ['SET', 'STRING', 'HSET'], '*:8888': ['ZSET', 'SET']}
+    inject(serv_to_reg, serv_to_type, [1,2,3,4,5], True)
 
 
-''' WIDGETS '''
-        #ml = F.add(npyscreen.MultiLineEdit, value = """try typing here!\nMutiline text, press ^R to reformat.\n""",
 
-        #self.tree   =   self.add(npyscreen.MLTreeMultiSelect)
-        #treedata = npyscreen.NPSTreeData(content='Root', selectable=True,ignoreRoot=False)
-        #c1 = treedata.newChild(content='Child 1', selectable=True, selected=True)
-        #c2 = treedata.newChild(content='Child 2', selectable=True)
-        #g1 = c1.newChild(content='Grand-child 1', selectable=True)
-        #g2 = c1.newChild(content='Grand-child 2', selectable=True)
-        #g3 = c1.newChild(content='Grand-child 3')
-        #gg1 = g1.newChild(content='Great Grand-child 1', selectable=True)
-        #gg2 = g1.newChild(content='Great Grand-child 2', selectable=True)
-        #gg3 = g1.newChild(content='Great Grand-child 3')
-        #self.tree.values = treedata
-       #       max_height=5, rely=9)
-
-        #s  = self.add(npyscreen.TitleSliderPercent, out_of=100, value=35, name="Progress:", editable=False)
-
+        #if "SADD" in op_type:
+        #    pass
+        #elif "SET" in op_type:
+        #    pass
+        #elif "ZADD" in op_type:
+        #    pass
+        #elif "GEOADD" in op_type:
+        #    pass
+        #elif "HSET" in op_type:
+        #    pass
+        #elif "HMSET" in op_type:
+        #    pass
+        #elif "PFADD" in op_type:
+        #    pass
+        #elif "LSET" in op_type:
+        #    pass
