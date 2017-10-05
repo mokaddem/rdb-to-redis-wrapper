@@ -11,9 +11,9 @@ sudo sh install_dependencies.sh
 
 ## Navigation
 
-- Navigation is done using <ARROWS>
-- Confirming is done using <ENTER>
-- Selecting/Unselecting is done using <SPACE>
+- Navigation is done using ```<ARROWS>```
+- Confirming is done using ```<ENTER>```
+- Selecting/Unselecting is done using ```<SPACE>```
 
 
 ## Commandline
