@@ -171,7 +171,7 @@ class RDBObject:
                  "HSET",
                  "LIST",
                  "GEOSET",
-                 "PFADD",
+                 "HYPERLOGLOG",
                 ]
         return to_ret
 
