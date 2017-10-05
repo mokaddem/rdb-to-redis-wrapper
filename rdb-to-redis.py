@@ -392,10 +392,19 @@ class rdbForm(npyscreen.ActionForm):
             self.grid.display()
 
     def on_ok(self):
+        if not self.redisFile.value: #Do not accept no server
+            npyscreen.notify_confirm("RDB file not selected", title='Error', editw=1)
+            return
         selected = self.chosenServer.get_selected_objects()
+        if not selected: #Do not accept no server
+            npyscreen.notify_confirm("No redis server server selected", title='Error', editw=1)
+            return
         RDBOBJECT.add_target_redis_servers(selected)
         RDBOBJECT.add_target_redis_servers_indexes(self.chosenServer.value)
         selected = self.chosenDb.get_selected_objects()
+        if not selected: #Do not accept no db
+            npyscreen.notify_confirm("No database selected", title='Error', editw=1)
+            return
         RDBOBJECT.add_selected_db(selected)
         self.parentApp.switchForm('FILTER')
 
