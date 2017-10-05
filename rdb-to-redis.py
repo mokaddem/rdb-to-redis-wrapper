@@ -525,8 +525,8 @@ class MyApplication(npyscreen.NPSAppManaged):
         #self.addForm('MAIN', filterForm, name='Filtering')
 
 
-def inject(serv_to_reg, serv_to_type, db_list, keep_db_organsization):
-    cmd = ["rdb","--c", "protocol", "dump6382.rdb"]
+def inject(filename, serv_to_reg, serv_to_type, db_list, keep_db_organsization):
+    cmd = ["rdb","--c", "protocol", filename]
     for db in db_list:
         cmd += ["--db"]
         cmd += [str(db)]
@@ -665,10 +665,12 @@ if __name__ == "__main__":
 
     App = MyApplication()
     App.run()
-    inject(RDBOBJECT.get_servers_with_regex(), RDBOBJECT.get_selected_type(), RDBOBJECT.get_selected_db(), True)
+    inject(RDBOBJECT.filename, RDBOBJECT.get_servers_with_regex(), RDBOBJECT.get_selected_type(), RDBOBJECT.get_selected_db(), True)
 
     '''
+    filename = "dump6382.rdb"
     inject(
+    filename,
     {'*:8888': ['TopTermFreq_set_day_'], '*:8889': ['per_paste_']},
     {'*:8888': ['STRING', 'SET', 'ZSET', 'HSET', 'LIST', 'GEOSET', 'PFADD'], '*:8889': ['STRING', 'SET', 'ZSET', 'HSET', 'LIST', 'GEOSET', 'PFADD']},
     [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15],
