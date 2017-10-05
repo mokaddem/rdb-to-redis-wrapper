@@ -54,6 +54,10 @@ class RDBObject:
         self.sizeByDB   =   {}
 
     def execMemoryReport(self):
+        if self.filename is None:
+            npyscreen.notify_confirm("No RDB file selected", title='Please Wait', editw=1)
+            return
+
         self.cmd = MEMORY_REPORT_COMMAND.format(self.filename)
         #estimate needed time
         self.estSecs = int(1.2*self.fileSize/(1024.0*1024.0)) #1.2s per Mb
@@ -143,7 +147,8 @@ class RDBObject:
     def add_selected_key_type(self, serverList, keyTypeList):
         for serv in serverList:
             for typ in keyTypeList:
-                self.target_server_type[serv].append(typ)
+                if typ not in self.target_server_type[serv]:
+                    self.target_server_type[serv].append(typ)
 
     def add_target_redis_servers(self, server_list):
         self.target_server = {}
@@ -158,7 +163,8 @@ class RDBObject:
         if len(server_list) > 0:
             self.regexMaxSize = self.regexMaxSize if self.regexMaxSize > len(regex) else len(regex)
         for serv in server_list:
-            self.target_server[serv].append(regex)
+            if regex not in self.target_server[serv]:
+                self.target_server[serv].append(regex)
 
     def list_running_servers(self):
         p = Popen([RUNNING_REDIS_SERVER_NAME_COMMAND], stdin=PIPE, stdout=PIPE, bufsize=1, shell=True)
@@ -170,7 +176,7 @@ class RDBObject:
                  "SET",
                  "ZSET",
                  "HSET",
-                 "LIST"
+                 "LIST",
                  "GEOSET",
                  "PFADD",
                 ]
@@ -431,7 +437,7 @@ class filterForm(npyscreen.ActionForm):
         self.vspace(2)
         self.add(npyscreen.TitleFixedText, name='Select redis database for which this regex applies:', 
                 value='', editable=False)
-        self.tree   =   self.add(npyscreen.MLTreeMultiSelect, max_height=10, max_width=80)
+        self.tree   =   self.add(npyscreen.MLTreeMultiSelect, max_height=30, max_width=80)
         treedata    =   npyscreen.NPSTreeData(content='Redis servers', selectable=False, ignoreRoot=False)
         for serv in RDBOBJECT.get_target_redis_servers():
             n = treedata.newChild(content=serv, selectable=True)
@@ -450,11 +456,16 @@ class filterForm(npyscreen.ActionForm):
         selected = self.tree.get_selected_objects(return_node=False)
         selected =[x for x in selected]
         regVal = self.regex.value
-        if regVal is not "":
-            RDBOBJECT.add_regex_to_servers(regVal, selected)
+        if regVal is "":
+            regVal = "(.*?)" #match anything
+
+        RDBOBJECT.add_regex_to_servers(regVal, selected)
 
         #type
         selected_type = self.chosenType.get_selected_objects()
+        if not selected_type: #Do not accept no db
+            npyscreen.notify_confirm("No key type selected", title='Error', editw=1)
+            return
         RDBOBJECT.add_selected_key_type(selected, selected_type)
 
         treedata    =   npyscreen.NPSTreeData(content='Redis servers', selectable=False, ignoreRoot=False)
@@ -613,7 +624,7 @@ def inject(serv_to_reg, serv_to_type, db_list, keep_db_organsization):
 
                 else:
                     for regName, regComp in compiled_reg.items():
-                        if len(regComp.findall(key)) == 1: #if 1 and only 1 match
+                        if regComp.search(key): #if 1 and only 1 match
                             #Apply redirect
                             for serv in reg_to_serv[regName]:
                                 p_cli_tab[serv].stdin.write(to_send)
@@ -625,7 +636,7 @@ def inject(serv_to_reg, serv_to_type, db_list, keep_db_organsization):
         if now - last_updated >= 1.0:
             last_updated = now
             duration_str = "{:.2f} min".format(duration/60) if duration >= 60.0 else "{:.2f} sec".format(duration)
-            print('Current DB: {}, Elapsed time: {}, Processed key: {}, Injected key: {}'.format(cur_db_num, duration_str, processed_key, inject_key), sep=' ', end='\r', flush=True)
+            print('Current DB: {}, Elapsed time: {}, Processed key: {}, Injected item: {}'.format(cur_db_num, duration_str, processed_key, inject_key), sep=' ', end='\r', flush=True)
 
     else:
         duration = time.time()-time_s
@@ -654,27 +665,12 @@ if __name__ == "__main__":
 
     App = MyApplication()
     App.run()
-    print(RDBOBJECT.get_selected_db(), RDBOBJECT.get_selected_type(), RDBOBJECT.get_servers_with_regex(), True)
-    serv_to_reg = {'*:8889': ['([A-Za-z])\w+'], '*:8888': ['([A-Za-z])\w+']}
-    serv_to_type = {'*:8889': ['SET', 'STRING', 'HSET'], '*:8888': ['ZSET', 'SET']}
-    #inject(serv_to_reg, serv_to_type, [1,2,3,4,5], True)
     inject(RDBOBJECT.get_servers_with_regex(), RDBOBJECT.get_selected_type(), RDBOBJECT.get_selected_db(), True)
 
-
-
-        #if "SADD" in op_type:
-        #    pass
-        #elif "SET" in op_type:
-        #    pass
-        #elif "ZADD" in op_type:
-        #    pass
-        #elif "GEOADD" in op_type:
-        #    pass
-        #elif "HSET" in op_type:
-        #    pass
-        #elif "HMSET" in op_type:
-        #    pass
-        #elif "PFADD" in op_type:
-        #    pass
-        #elif "LSET" in op_type:
-        #    pass
+    '''
+    inject(
+    {'*:8888': ['TopTermFreq_set_day_'], '*:8889': ['per_paste_']},
+    {'*:8888': ['STRING', 'SET', 'ZSET', 'HSET', 'LIST', 'GEOSET', 'PFADD'], '*:8889': ['STRING', 'SET', 'ZSET', 'HSET', 'LIST', 'GEOSET', 'PFADD']},
+    [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15],
+    True)
+    '''
