@@ -2,9 +2,21 @@
 
 A TUI interface to easily inject keys from RDB file into a running Redis server.
 
+## Installation
+
+Run the installation script:
+```
+sudo sh install_dependencies.sh
+```
+
+## Navigation
+
 - Navigation is done using <ARROWS>
 - Confirming is done using <ENTER>
 - Selecting/Unselecting is done using <SPACE>
+
+
+## Commandline
 
 ```
 optional arguments:
