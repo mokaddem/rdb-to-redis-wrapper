@@ -1,4 +1,6 @@
 import time
+from datetime import timedelta
+import os
 import re
 from subprocess import PIPE, Popen
 
@@ -42,6 +44,13 @@ def inject(filename, serv_to_reg, serv_to_type, db_list, keep_db_organsization):
                 op_type_to_serv[type_mapped] = []
             op_type_to_serv[type_mapped].append(serv)
 
+
+    filesize = os.path.getsize(filename)
+    sec_per_mb = 0.6
+    if filesize/(1024.0*1024.0) < 200.0:
+        sec_per_mb *= 2
+    estSecs = int(sec_per_mb*filesize/(1024.0*1024.0)) #s per Mb
+    print("Estimated process duration: {}".format(str(timedelta(seconds=estSecs))))
 
     ##Process the file
     time_s = time.time()
