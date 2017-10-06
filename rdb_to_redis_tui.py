@@ -9,7 +9,6 @@ RDBOBJECT = None
 
 RUNNING_REDIS_SERVER_NAME_COMMAND = rb"ps aux | grep redis-server | cut -d. -f4 | cut -s -d ' ' -f2 | grep :"
 MEMORY_REPORT_COMMAND = r"rdb -c memory {}"
-sec_per_mb = 1.2
 
 def sizeof_fmt(num, suffix='B'):
     for unit in ['','Ki','Mi','Gi','Ti','Pi','Ei','Zi']:
@@ -31,6 +30,7 @@ class RDBObject:
         self.processStartTime = 0
 
         #after memory report (type change after MemReport)
+        self.sec_per_mb = 0.6
         self.Pfinished = False
         self.activeDB   =   '?'
         self.keyPerDB   =   '?'
@@ -47,7 +47,9 @@ class RDBObject:
 
         self.cmd = MEMORY_REPORT_COMMAND.format(self.filename)
         #estimate needed time
-        self.estSecs = int(sec_per_mb*self.fileSize/(1024.0*1024.0)) #s per Mb
+        if self.fileSize/(1024.0*1024.0) < 200.0:
+            self.sec_per_mb *= 2
+        self.estSecs = int(self.sec_per_mb*self.fileSize/(1024.0*1024.0)) #s per Mb
         estTimeStr = str(timedelta(seconds=self.estSecs))
 
         start = npyscreen.notify_ok_cancel("Execute a memory report? This operation may take a long time.\nEstimated Time: ~{}".format(estTimeStr), title= 'Confirm', editw=1)
