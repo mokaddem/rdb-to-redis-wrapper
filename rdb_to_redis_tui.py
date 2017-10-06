@@ -71,15 +71,10 @@ class RDBObject:
             self.memThread.start()
 
     def memReportFunction(self):
-        #self.process = Popen([self.cmd], stdin=PIPE, stdout=PIPE, bufsize=1, shell=True)
         self.process = Popen([self.cmd], stdout=PIPE, shell=True)
 
         (report, err) = self.process.communicate()
-        #report = self.process.stdout.read()
         report = report.decode('utf8')
-        with open('test.out', 'w') as f:
-            f.write(str(self.cmd))
-            f.flush()
 
         report = report.splitlines()
         for line in report[1:]:
@@ -122,7 +117,7 @@ class RDBObject:
                     "File size":self.fileSize,
                     "active DB":self.activeDB,
                     "key per DB":self.keyPerDB,
-                    "size per DB":self.keyTypeSizeCount,
+                    "size per DB":self.sizeByDB,
                     "Total key":self.totKey,
                     "Number of key per key type": self.keyTypeCount,
                     "Total size per key type": self.keyTypeSizeCount
@@ -376,7 +371,7 @@ class rdbForm(npyscreen.ActionForm):
                 values=rdbInfo[1])
 
         rdbInfoDB = RDBOBJECT.get_rdb_DB_infos()
-        self.grid_db = self.add(npyscreen.GridColTitles, editable=False, max_height=5, hidden=True,
+        self.grid_db = self.add(npyscreen.GridColTitles, editable=False, columns=11, max_height=5, hidden=True,
                 col_titles=rdbInfoDB[0],
                 values=rdbInfoDB[1])
 
