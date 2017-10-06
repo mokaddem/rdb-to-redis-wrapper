@@ -1,6 +1,7 @@
 import npyscreen
 import sys, os
 import time
+from datetime import timedelta
 from subprocess import PIPE, Popen
 import threading
 
@@ -30,6 +31,7 @@ class RDBObject:
         self.processStartTime = 0
 
         #after memory report (type change after MemReport)
+        self.Pfinished = False
         self.activeDB   =   '?'
         self.keyPerDB   =   '?'
         self.keyPerDBStr=   '?'
@@ -46,7 +48,7 @@ class RDBObject:
         self.cmd = MEMORY_REPORT_COMMAND.format(self.filename)
         #estimate needed time
         self.estSecs = int(sec_per_mb*self.fileSize/(1024.0*1024.0)) #s per Mb
-        estTimeStr = "{:.2f} min".format(self.estSecs/60) if self.estSecs >= 60.0 else "{:.2f} sec".format(self.estSecs)
+        estTimeStr = str(timedelta(seconds=self.estSecs))
 
         start = npyscreen.notify_ok_cancel("Execute a memory report? This operation may take a long time.\nEstimated Time: ~{}".format(estTimeStr), title= 'Confirm', editw=1)
         if start:
@@ -62,16 +64,21 @@ class RDBObject:
             ntfPopup    =   npyscreen.notify_confirm("Memory report in progress... \nResult will be saved in \'mem_report.txt\'.", title='Please Wait', editw=1)
             #Long command
 
-            self.Pfinished = False
             self.memThread = threading.Thread(name='memThread', target=self.memReportFunction)
             self.memThread.setDaemon(True)
             self.memThread.start()
 
     def memReportFunction(self):
-        self.process = Popen([self.cmd], stdin=PIPE, stdout=PIPE, bufsize=1, shell=True)
+        #self.process = Popen([self.cmd], stdin=PIPE, stdout=PIPE, bufsize=1, shell=True)
+        self.process = Popen([self.cmd], stdout=PIPE, shell=True)
 
-        report = self.process.stdout.read()
+        (report, err) = self.process.communicate()
+        #report = self.process.stdout.read()
         report = report.decode('utf8')
+        with open('test.out', 'w') as f:
+            f.write(str(self.cmd))
+            f.flush()
+
         report = report.splitlines()
         for line in report[1:]:
             tab     =   line.split(',')
@@ -302,11 +309,14 @@ class rdbForm(npyscreen.ActionForm):
             self.time_widget.display()
             self.timeR_widget.display()
             self.time_pb.display()
+            elapsSec = 0.0
 
             while(not RDBOBJECT.Pfinished): #process not terminated
-                elapsSec    =   time.time()-RDBOBJECT.processStartTime
-                elapsTimeStr=   "{:.2f} min".format(elapsSec/60) if elapsSec >= 60.0 else "{:.2f} sec".format(elapsSec)
-                remTimeStr=   "{:.2f} min".format(RDBOBJECT.estSecs - elapsSec/60) if RDBOBJECT.estSecs - elapsSec >= 60.0 else "{:.2f} sec".format(RDBOBJECT.estSecs - elapsSec)
+                elapsSec    =   int(time.time()-RDBOBJECT.processStartTime)
+                elapsTimeStr=   str(timedelta(seconds=elapsSec))
+                #elapsTimeStr=   "{:.2f} min".format(elapsSec/60) if elapsSec >= 60.0 else "{:.2f} sec".format(elapsSec)
+                #remTimeStr=   "{:.2f} min".format(RDBOBJECT.estSecs - elapsSec/60) if RDBOBJECT.estSecs - elapsSec >= 60.0 else "{:.2f} sec".format(RDBOBJECT.estSecs - elapsSec)
+                remTimeStr  =   str(timedelta(seconds=RDBOBJECT.estSecs - elapsSec))
                 self.time_widget.value = elapsTimeStr
                 self.timeR_widget.value = remTimeStr
                 self.time_pb.value = elapsSec/RDBOBJECT.estSecs*100 if elapsSec/RDBOBJECT.estSecs*100 <= 100 else 99.99
