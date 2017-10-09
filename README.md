@@ -2,6 +2,11 @@
 
 A TUI interface to easily inject keys from a RDB file into a running Redis server.
 
+## Dependencies
+- npyscreen 
+- rdbtools
+- virtualenv
+
 ## Installation
 
 Run the installation script:
