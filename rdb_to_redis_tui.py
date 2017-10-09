@@ -281,6 +281,14 @@ class RDBObject:
         else:
             return self.list_running_servers()
 
+    def get_all_redis_servers(self):
+        the_list = set()
+        for i in list(self.target_server.keys()):
+            the_list.add(i)
+        for i in self.list_running_servers():
+            the_list.add(i)
+        return list(the_list)
+
     def get_target_redis_servers_indexes(self):
         return list(self.target_server_indexes)
 
@@ -395,8 +403,17 @@ class rdbForm(npyscreen.ActionForm):
         self.vspace()
         self.chosenServer=  self.add(npyscreen.TitleMultiSelect, max_height=10, rely=32, relx=self.chosenDb.width+10,
                 name    =   "Select Redis server in which to inject:", 
-                values  =   RDBOBJECT.list_running_servers(),
+                values  =   RDBOBJECT.get_all_redis_servers(),
                 value   =   RDBOBJECT.get_target_redis_servers_indexes())
+        self.addServerField = self.add(npyscreen.TitleText, name="Running redis server: ", max_width=60, relx=self.chosenDb.width+10)
+        self.addServerButton = self.add(npyscreen.ButtonPress, name = 'Add', relx=self.addServerField.width+45 , rely=43, when_pressed_function=self.add_new_redis_server)
+
+    def add_new_redis_server(self):
+        valToAdd = self.addServerField.value
+        if valToAdd:
+            RDBOBJECT.add_target_redis_servers([valToAdd])
+            self.chosenServer.values = RDBOBJECT.get_all_redis_servers()
+            self.chosenServer.display()
 
     def on_valueChanged(self, *args, **keywords):
         if self.redisFile.value:
