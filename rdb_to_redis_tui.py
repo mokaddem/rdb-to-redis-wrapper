@@ -1,5 +1,6 @@
 import npyscreen
 import sys, os
+import re
 import time
 from datetime import timedelta
 from subprocess import PIPE, Popen
@@ -7,7 +8,7 @@ import threading
 
 RDBOBJECT = None
 
-RUNNING_REDIS_SERVER_NAME_COMMAND = rb"ps aux | grep redis-server | cut -d. -f4 | cut -s -d ' ' -f2 | grep :"
+RUNNING_REDIS_SERVER_NAME_COMMAND = rb"ps aux | grep -G 'redis-server .*:.*'"
 MEMORY_REPORT_COMMAND = r"rdb -c memory {}"
 
 def sizeof_fmt(num, suffix='B'):
@@ -160,12 +161,18 @@ class RDBObject:
     def list_running_servers(self):
         p = Popen([RUNNING_REDIS_SERVER_NAME_COMMAND], stdin=PIPE, stdout=PIPE, bufsize=1, shell=True)
         res = [serv.decode('ascii') for serv in p.stdout.read().splitlines()]
+        servers = []
+        for l in res:
+            serv = l.split("redis-server ")[1]
+            if ".*:.*" in serv:
+                continue
+            servers.append(serv)
         index_list = []
-        for i, serverName in enumerate(res):
+        for i, serverName in enumerate(servers):
             if serverName in self.target_server.keys():
                 self.target_server_indexes.append(i)
 
-        return res
+        return servers
 
     def list_keyType(self):
         to_ret = [
